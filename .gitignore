@@ -1,0 +1,46 @@
+# ── Your data: never committed ─────────────────────────────────────────────
+# Dev builds (`npm run tauri dev`) store notes, to-dos and settings here
+# instead of %APPDATA%\com.dotmd.app (see storage::data_root).
+dev-data/
+# Anything personal you want to keep next to the code.
+private/
+# Stray backups / exports made while testing.
+*.zip
+backups/
+
+# ── Dependencies & build output ────────────────────────────────────────────
+node_modules
+dist
+dist-ssr
+*.local
+src-tauri/target/
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ── Editor / OS ────────────────────────────────────────────────────────────
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+Thumbs.db
+desktop.ini
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ── AI / design tooling (local state, caches, screenshots) ─────────────────
+.claude/
+.gstack/
+.impeccable/review/
+.impeccable/questions/
+.impeccable/hook.cache.json
+

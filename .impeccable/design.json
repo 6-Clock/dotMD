@@ -1,0 +1,181 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-30T00:00:00Z",
+  "title": "Design System: dotMD",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "Ink",
+        "canonical": "#141414",
+        "tonalRamp": ["#0a0a0a", "#141414", "#2e2e2b", "#4a4a46", "#65655f", "#8a8a84", "#c4c4bf", "#f2f2ef"]
+      },
+      "bg": {
+        "role": "neutral",
+        "displayName": "Paper",
+        "canonical": "#ffffff",
+        "tonalRamp": ["#141414", "#3a3a37", "#65655f", "#8a8a84", "#b5b5b0", "#e2e2dd", "#f2f2ef", "#ffffff"]
+      },
+      "grouped": {
+        "role": "neutral",
+        "displayName": "Ground",
+        "canonical": "#f2f2ef",
+        "tonalRamp": ["#1c1c1a", "#3a3a37", "#5a5a55", "#7d7d77", "#a3a39d", "#cacac4", "#e2e2dd", "#f2f2ef"]
+      },
+      "border": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#e2e2dd",
+        "tonalRamp": ["#262624", "#45453f", "#65655f", "#8a8a84", "#b0b0aa", "#cfcfca", "#e2e2dd", "#f2f2ef"]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Muted",
+        "canonical": "#65655f",
+        "tonalRamp": ["#1e1e1c", "#2f2f2c", "#45453f", "#56564f", "#65655f", "#83837c", "#a9a9a3", "#d6d6d1"]
+      },
+      "highlight": {
+        "role": "content",
+        "displayName": "Highlighter",
+        "canonical": "#ffc83d",
+        "tonalRamp": ["#3d2c00", "#5e4500", "#836100", "#a87d00", "#d29c10", "#ffc83d", "#ffdb80", "#fff1cc"]
+      },
+      "danger": {
+        "role": "semantic",
+        "displayName": "Danger",
+        "canonical": "#d92d20",
+        "tonalRamp": ["#2c0b08", "#4f140f", "#761d16", "#9c251c", "#c02a1f", "#d92d20", "#ea6f66", "#f8c3bf"]
+      },
+      "success": {
+        "role": "semantic",
+        "displayName": "Success",
+        "canonical": "#1f9d6b",
+        "tonalRamp": ["#06231a", "#0b3a2b", "#10543e", "#167051", "#1b8a60", "#1f9d6b", "#5cc39a", "#bfe8d6"]
+      }
+    },
+    "typographyMeta": {
+      "view-title": { "displayName": "View title", "purpose": "800-weight, tightly tracked titles for views, the Calendar month and note titles." },
+      "body": { "displayName": "Body", "purpose": "Editor text, Inter at 15.5px × zoom, line-height 1.75." },
+      "ui": { "displayName": "UI", "purpose": "Rows, buttons, tabs, chips at 12.5–13.5px / 600–700; tabular figures for numbers." },
+      "label": { "displayName": "Label", "purpose": "Ruled uppercase muted section labels (Files recency groups, No date, Used in)." },
+      "mono": { "displayName": "Mono", "purpose": "Inline and fenced code only." }
+    },
+    "shadows": [
+      { "name": "page", "value": "0 0 0 .5px var(--border), 0 1px 2px var(--shadow-color), 0 10px 36px -12px var(--shadow-color)", "purpose": "The writing sheet — paper resting on the ground." },
+      { "name": "sticker-lift", "value": "0 0 0 3px var(--sticker-ring), 0 1px 2px var(--shadow-color), 0 5px 12px -3px var(--shadow-color)", "purpose": "Die-cut ring + soft lift on every sticker." },
+      { "name": "floating-menu", "value": "0 0 0 .5px var(--border), 0 12px 34px var(--shadow-color)", "purpose": "Context menus (translucent, blurred)." },
+      { "name": "toast", "value": "0 0 0 3px var(--sticker-ring), 0 2px 4px var(--shadow-color), 0 14px 32px var(--shadow-color)", "purpose": "Undo toasts — a big tilted sticker." }
+    ],
+    "motion": [
+      { "name": "--ease", "value": "cubic-bezier(0.22, 1, 0.36, 1)", "purpose": "Exponential ease-out for state and view changes." },
+      { "name": "--ease-pop", "value": "cubic-bezier(0.34, 1.45, 0.64, 1)", "purpose": "Small overshoot for pops and sticker peels." },
+      { "name": "--t-fast", "value": "140ms", "purpose": "Hover, press, state." },
+      { "name": "--t-med", "value": "240ms", "purpose": "View entry and overlays." },
+      { "name": "peel-on", "value": "200ms var(--ease-pop)", "purpose": "A sticker landing on its new spot." }
+    ],
+    "washes": [
+      { "name": "--selection", "value": "rgba(20, 20, 20, 0.12)", "purpose": "Text selection." },
+      { "name": "--hover", "value": "rgba(20, 20, 20, 0.05)", "purpose": "Row/button hover." },
+      { "name": "--active", "value": "rgba(20, 20, 20, 0.09)", "purpose": "Active/selected wash, segment tracks, multi-select rows." },
+      { "name": "--active-line", "value": "rgba(20, 20, 20, 0.035)", "purpose": "Editor active line." },
+      { "name": "--row-selected", "value": "color-mix(in srgb, var(--text) 8%, var(--card))", "purpose": "Selected row fill when not a sticker." }
+    ],
+    "sticker": {
+      "bg": "var(--accent)",
+      "ink": "var(--on-accent)",
+      "radius": "10px 13px 9px 12px",
+      "ring": "#ffffff",
+      "tilt": "-1.5deg",
+      "usedBy": ["active rail item", "active tab", "active tag chip", "active theme chip", "Calendar today", "Board subject headers", "toast", "open note row (Files)", "image-preview current frame (white ring only)"]
+    },
+    "subjectSwatches": ["blue #2f6fed", "orange #ff7a2f", "green #1fa971", "purple #7c4deb", "pink #f0508c", "teal #12a6a0", "yellow #ffc83d", "red #f0473c", "indigo #4f46e5", "mint #2ec4a6", "brown #8c5e3c", "gray #8a8a84"],
+    "syntax": {
+      "light": { "keyword": "#ad3da4", "string": "#c41a16", "func": "#3e6d74", "number": "#1c00cf", "comment": "#6c7986", "type": "#0b4f79", "property": "#326d74" }
+    }
+  },
+  "components": [
+    {
+      "name": "Sticker",
+      "kind": "custom",
+      "refersTo": "sticker",
+      "description": "The 'you are here' state: ink fill, white die-cut ring, soft lift, hand-cut corners, −1.5° tilt.",
+      "html": "<span class=\"ds-sticker\">Files</span>",
+      "css": ".ds-sticker { display: inline-flex; align-items: center; padding: 5px 11px; background: #141414; color: #fff; font: 700 13px 'Inter Variable', 'Segoe UI', system-ui, sans-serif; border-radius: 10px 13px 9px 12px; box-shadow: 0 0 0 3px #fff, 0 1px 2px rgba(20,20,20,.16), 0 5px 12px -3px rgba(20,20,20,.16); transform: rotate(-1.5deg); }"
+    },
+    {
+      "name": "Ink Button",
+      "kind": "button",
+      "refersTo": "button-ink",
+      "description": "Primary add action (+ New, To-do +): ink fill, white glyph.",
+      "html": "<button class=\"ds-ink\">+ New</button>",
+      "css": ".ds-ink { height: 30px; padding: 0 12px; border: none; border-radius: 8px; background: #141414; color: #fff; font: 700 12.5px 'Inter Variable', 'Segoe UI', system-ui, sans-serif; cursor: default; }"
+    },
+    {
+      "name": "Button",
+      "kind": "button",
+      "refersTo": "button",
+      "description": "Storage-style button: card fill, inset hairline ring; danger variant in red; armed = solid red confirm.",
+      "html": "<button class=\"ds-btn\">Preview</button> <button class=\"ds-btn danger\">Move to trash</button> <button class=\"ds-btn armed\">Click again…</button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border: none; border-radius: 8px; background: #fff; box-shadow: inset 0 0 0 1px #e2e2dd; color: #141414; font: 650 12.5px 'Inter Variable', 'Segoe UI', system-ui, sans-serif; cursor: default; } .ds-btn:hover { box-shadow: inset 0 0 0 1px #65655f; } .ds-btn.danger { color: #d92d20; } .ds-btn.armed { background: #d92d20; color: #fff; box-shadow: none; }"
+    },
+    {
+      "name": "Section Tabs",
+      "kind": "custom",
+      "refersTo": "tabs",
+      "description": "Storage section tabs over a 2px heading rule; the active tab is an ink fill.",
+      "html": "<div class=\"ds-tabs\"><button class=\"on\">Images <span>12</span></button><button>Notes <span>40</span></button><button>Trash <span>3</span></button></div>",
+      "css": ".ds-tabs { display: flex; gap: 4px; padding-bottom: 12px; border-bottom: 2px solid #0a0a0a; } .ds-tabs button { height: 32px; padding: 0 13px; border: none; border-radius: 9px; background: transparent; color: #65655f; font: 700 13.5px 'Inter Variable', system-ui, sans-serif; } .ds-tabs button.on { background: #141414; color: #fff; } .ds-tabs span { font-size: 12px; opacity: .7; }"
+    },
+    {
+      "name": "Context Menu",
+      "kind": "custom",
+      "refersTo": "overlay",
+      "description": "Translucent blurred card; floats, so it casts a shadow.",
+      "html": "<div class=\"ds-menu\"><button>Open</button><button>Rename</button><button>Duplicate</button><hr /><button class=\"danger\">Delete</button></div>",
+      "css": ".ds-menu { min-width: 200px; padding: 5px; display: flex; flex-direction: column; background: rgba(255,255,255,.94); backdrop-filter: blur(20px) saturate(1.6); border-radius: 12px; box-shadow: 0 0 0 .5px #e2e2dd, 0 12px 34px rgba(20,20,20,.16); } .ds-menu button { text-align: left; border: none; background: transparent; padding: 6px 10px; border-radius: 8px; font: 500 13px 'Inter Variable', system-ui, sans-serif; color: #141414; } .ds-menu button:hover { background: #141414; color: #fff; } .ds-menu .danger { color: #d92d20; } .ds-menu hr { border: none; height: 1px; background: #e2e2dd; margin: 4px 6px; }"
+    },
+    {
+      "name": "Unused Badge",
+      "kind": "custom",
+      "refersTo": "badge-danger",
+      "description": "Small red-tinted badge for problems (Unused image, Overdue).",
+      "html": "<span class=\"ds-badge\">Unused</span>",
+      "css": ".ds-badge { padding: 1px 7px; border-radius: 6px; background: color-mix(in srgb, #d92d20 12%, #fff); color: #d92d20; font: 700 12px 'Inter Variable', system-ui, sans-serif; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Sticker",
+    "overview": "dotMD lives in the world of its logo: black ink on white paper, with the 'you are here' moments peeled off as die-cut stickers. The writing sheet is a white page lifted off a warm-neutral ground; the chrome is the same ground, quiet and flat. Ink is the accent. This is an Operate surface, so the personality lives in a handful of precise details (sticker states, hand-cut corners, heavy titles, the blinking 'oo' eyes in empty states) while lists stay scanable and every view is keyboard-first.",
+    "keyCharacteristics": [
+      "White paper sheet on a warm-neutral ground; flat chrome.",
+      "Ink is the accent: fills, active states, primary actions.",
+      "Stickers mark 'you are here': ink fill, white die-cut ring, soft lift, tilt, uneven corners.",
+      "Inter Variable everywhere; 800-weight tightly tracked titles; mono only for code.",
+      "Colour comes from content (subject swatches, tags, highlights) and danger.",
+      "Quick iOS-like motion: exponential ease-out, a small overshoot for pops."
+    ],
+    "rules": [
+      { "name": "The Ink Rule", "body": "The accent is ink. A brand hue in chrome is a defect; colour belongs to content and to danger.", "section": "colors" },
+      { "name": "The Fill vs Line Rule", "body": "--accent is for fills, --accent-strong for text and lines; never set text in --accent.", "section": "colors" },
+      { "name": "The Heavy Title Rule", "body": "Titles are short, 800-weight and tightly tracked; everything beneath stays 600–700 at small sizes.", "section": "typography" },
+      { "name": "The Quiet Label Rule", "body": "Section labels are small, uppercase, letter-spaced, muted and ruled — never large.", "section": "typography" },
+      { "name": "The Lift-Means-On-Top Rule", "body": "Rows and cards don't cast shadows; only the page, stickers and floating things lift.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do use stickers only for 'you are here', one per group.",
+      "Do keep chrome ink-and-paper; let subjects, tags and highlights bring colour.",
+      "Do read every colour, radius and wash from its variable so presets keep working.",
+      "Do give every list view keyboard selection and stand its keys down while an overlay owns them.",
+      "Do make destructive actions undoable; reserve the two-click armed confirm for permanent deletes.",
+      "Do use tabular figures for sizes, counts and dates."
+    ],
+    "donts": [
+      "Don't introduce a brand hue into chrome.",
+      "Don't set text in --accent; use --accent-strong.",
+      "Don't add resting shadows to rows or cards.",
+      "Don't add confirm dialogs for recoverable actions.",
+      "Don't use mono as costume in chrome.",
+      "Don't hardcode hex in new UI (dark scrims excepted)."
+    ]
+  }
+}

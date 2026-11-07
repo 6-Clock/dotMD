@@ -1,0 +1,32 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "design-system-font",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision"
+        ],
+        "createdAt": "2026-10-29T09:11:56.588Z",
+        "reason": "agent: DESIGN.md is stale (documents Nunito while the shipped app uses Inter); decision sketches are throwaway planning mocks pending redesign"
+      },
+      {
+        "rule": "overused-font",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision"
+        ],
+        "createdAt": "2026-10-29T09:16:10.239Z",
+        "reason": "agent: throwaway decision-round sketches mirroring the shipped app's current font; not shipping UI"
+      },
+      {
+        "rule": "overused-font",
+        "value": "inter",
+        "createdAt": "2026-10-29T09:18:38.265Z",
+        "reason": "user confirmed 2026-10-29: keep Inter as the app font in the Sticker Sheet redesign"
+      }
+    ]
+  }
+}
