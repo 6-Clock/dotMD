@@ -9,6 +9,10 @@
   Summon it from anywhere, jot, get out of the way.
 </p>
 
+<p align="center">
+  <img src="docs/screenshots/editor.png" alt="dotMD editor: a note with headings, a checklist and tags, next to the Files list">
+</p>
+
 ---
 
 ## What it is
@@ -66,6 +70,19 @@ dotMD has one idea at its core:
 - **Board** (one colour box per subject), **Calendar** (an agenda by day plus
   a whole-year view) and **Projects** (a page per subject with progress,
   linked notes and a deadline planner)
+
+<table>
+  <tr>
+    <td width="33%"><img src="docs/screenshots/board.png" alt="Board view: one colour box of tasks per subject"></td>
+    <td width="33%"><img src="docs/screenshots/calendar.png" alt="Calendar view: an agenda by day beside a mini month and the year so far"></td>
+    <td width="33%"><img src="docs/screenshots/projects.png" alt="A project page: goal, progress, tasks, linked notes and a deadline planner"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Board</b></td>
+    <td align="center"><b>Calendar</b></td>
+    <td align="center"><b>Projects</b></td>
+  </tr>
+</table>
 
 **Housekeeping**
 - **Storage** view: disk usage, unused images, trash, tag and subject cleanup
@@ -147,6 +164,9 @@ $env:DOTMD_DATA_DIR = "$env:APPDATA\com.dotmd.app"; npm run tauri dev
 ```
 
 `private/` is git-ignored too, for personal files you want next to the code.
+
+The screenshots in `docs/screenshots/` were taken from a dev build with sample
+notes, at a 1440×900 window.
 
 **Checks:**
 
