@@ -34,7 +34,20 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
+    "publisher": "dotMD",
+    "copyright": "Copyright (c) 2026 dotMD contributors. MIT License.",
+    "category": "Productivity",
+    "shortDescription": "A fast, local Markdown scratchpad",
+    "longDescription": "Summon dotMD from anywhere with a global shortcut, jot, and get out of the way. Notes are plain .md files on your own disk.",
+    "homepage": "https://github.com/6-Clock/dotMD",
+    "windows": {
+      "webviewInstallMode": { "type": "downloadBootstrapper" },
+      "nsis": {
+        "installMode": "currentUser",
+        "startMenuFolder": "dotMD"
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

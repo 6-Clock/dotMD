@@ -1,0 +1,51 @@
+# Builds the Windows installer and attaches it to a draft GitHub release.
+#
+# To cut a release:
+#   1. Bump "version" in package.json, src-tauri/tauri.conf.json and src-tauri/Cargo.toml
+#   2. git tag v0.1.0 && git push origin v0.1.0
+#   3. Wait for this workflow, then open Releases, check the draft, and Publish.
+#
+# It can also be started by hand from the Actions tab (workflow_dispatch).
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: dotMD v__VERSION__
+          releaseBody: |
+            Download **dotMD_*_x64-setup.exe** below and run it. No admin rights needed.
+
+            Windows may say "Windows protected your PC" because the installer isn't code-signed yet.
+            Click **More info → Run anyway**.
+          releaseDraft: true
+          prerelease: false

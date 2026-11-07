@@ -46,6 +46,22 @@ dotMD has one idea at its core:
 - **`Ctrl+P` gets anything back.** Quick-open by name, or search the full
   text with `Ctrl+Shift+F`.
 
+## Download
+
+1. Go to [**Releases**](https://github.com/6-Clock/dotMD/releases/latest) and
+   download `dotMD_<version>_x64-setup.exe`.
+2. Run it. It installs for your user only (no admin prompt) and adds dotMD to
+   the Start Menu.
+3. Open dotMD from the Start Menu, or press `Ctrl+Shift+J` from anywhere.
+
+Windows may show **"Windows protected your PC"** the first time, because the
+installer isn't code-signed yet. Click **More info → Run anyway**.
+
+dotMD needs Windows 10 or 11. It uses Microsoft Edge WebView2, which Windows 11
+already has; on Windows 10 the installer downloads it if it's missing.
+Uninstall it from **Settings → Apps** like any other app. Your notes in
+`%APPDATA%\com.dotmd.app\` are kept.
+
 ## Features
 
 **Writing**
@@ -148,8 +164,16 @@ rustup, plus the MSVC build tools and Windows SDK on Windows).
 ```sh
 npm install
 npm run tauri dev      # run with hot reload
-npm run tauri build    # build an installer (.msi / .exe)
+npm run tauri build    # build the installer
 ```
+
+The installer lands in
+`src-tauri/target/release/bundle/nsis/dotMD_<version>_x64-setup.exe`.
+
+**Releasing:** bump the version in `package.json`, `src-tauri/tauri.conf.json`
+and `src-tauri/Cargo.toml`, then push a tag like `v0.1.0`. The
+[Release workflow](.github/workflows/release.yml) builds the installer on
+GitHub and attaches it to a draft release for you to publish.
 
 If linking fails on Windows with `LNK1181: cannot open input file 'dbghelp.lib'`,
 the Build Tools install didn't register the SDK paths. Run
