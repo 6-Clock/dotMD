@@ -177,6 +177,13 @@ function makeLive(key: number): Live {
     }
     api.termWrite(l.pty, data).catch(() => {});
   });
+  // Mouse reports from full-screen apps (herdr, htop, vim…) in the X10/normal
+  // encoding come through onBinary, not onData; without this, clicks in
+  // those apps silently go nowhere.
+  term.onBinary((data) => {
+    if (l.pty === null || meta(key)?.status === "exited") return;
+    api.termWrite(l.pty, data, true).catch(() => {});
+  });
   term.onResize(({ cols, rows }) => {
     if (l.pty !== null) api.termResize(l.pty, cols, rows).catch(() => {});
   });

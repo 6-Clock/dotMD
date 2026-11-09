@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use tauri::ipc::{InvokeBody, Request};
 use tauri::AppHandle;
 
-use crate::storage::{self, TRASH};
+use crate::storage;
 
 const EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"];
 
@@ -102,8 +102,13 @@ pub fn import_image(app: AppHandle, path: String) -> Result<String, String> {
 /// restore never comes back with missing pictures), and system/.
 fn all_note_text(app: &AppHandle) -> Result<String, String> {
     let notes = storage::notes_dir(app)?;
-    let dirs = [notes.clone(), notes.join(TRASH), storage::system_dir(app)?];
+    let dirs = [storage::trash_dir(app)?, storage::system_dir(app)?];
     let mut text = String::new();
+    // Live notes, including project folders.
+    for (_, path) in storage::note_files(&notes) {
+        text.push_str(&fs::read_to_string(&path).unwrap_or_default());
+        text.push('\n');
+    }
     // Project logos (projects/*.md front matter) count as links too.
     for path in crate::projects::project_files(app) {
         text.push_str(&fs::read_to_string(&path).unwrap_or_default());
@@ -144,17 +149,16 @@ pub fn unused_images(app: AppHandle) -> Result<usize, String> {
     Ok(find_unused(&app)?.len())
 }
 
-/// Move unused images into assets/.trash/ (never a hard delete). Returns how
+/// Move unused images into trash/images/ (never a hard delete). Returns how
 /// many were moved.
 #[tauri::command]
 pub fn clean_unused_images(app: AppHandle) -> Result<usize, String> {
     let unused = find_unused(&app)?;
-    let trash = assets_dir(&app)?.join(TRASH);
-    fs::create_dir_all(&trash).map_err(|e| e.to_string())?;
+    let trash = crate::trash::images_dir(&app)?;
     for path in &unused {
-        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("image");
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("png");
-        fs::rename(path, unique_file(&trash, stem, ext)).map_err(|e| e.to_string())?;
+        let file = path.file_name().and_then(|s| s.to_str()).unwrap_or("image.png");
+        let stem = crate::trash::free_stem(&trash, file, "");
+        fs::rename(path, trash.join(stem)).map_err(|e| e.to_string())?;
     }
     Ok(unused.len())
 }

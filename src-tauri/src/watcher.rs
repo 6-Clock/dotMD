@@ -9,7 +9,7 @@
 use std::sync::mpsc::channel;
 
 use notify::{EventKind, RecursiveMode, Watcher};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 
 use crate::storage;
 
@@ -19,6 +19,8 @@ const NOTES_EVENT: &str = "notes-changed";
 const PROJECTS_EVENT: &str = "projects-changed";
 /// Emitted when todo.md changes on disk.
 const TODO_EVENT: &str = "todo-changed";
+/// Emitted when anything under trash/ changes (deletes, restores, emptying).
+const TRASH_EVENT: &str = "trash-changed";
 
 /// Start watching the data folder. Failures are logged, not fatal — the app
 /// still works, it just won't auto-refresh on external changes.
@@ -32,6 +34,8 @@ fn try_start(app: &AppHandle) -> Result<(), String> {
     let notes_dir = storage::notes_dir(app)?;
     let projects_dir = crate::projects::projects_dir(app)?;
     let data_dir = storage::data_dir(app)?;
+    let trash_dir = data_dir.join(crate::trash::ROOT);
+    std::fs::create_dir_all(&trash_dir).map_err(|e| e.to_string())?;
 
     let (tx, rx) = channel();
     let mut watcher =
@@ -49,6 +53,9 @@ fn try_start(app: &AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     watcher
         .watch(&data_dir, RecursiveMode::NonRecursive)
+        .map_err(|e| e.to_string())?;
+    watcher
+        .watch(&trash_dir, RecursiveMode::Recursive)
         .map_err(|e| e.to_string())?;
 
     let handle = app.clone();
@@ -70,7 +77,13 @@ fn try_start(app: &AppHandle) -> Result<(), String> {
             let mut notes = false;
             let mut todo = false;
             let mut projects = false;
+            let mut trash = false;
             for path in &event.paths {
+                // Anything in trash/ (notes, images, project folders, tasks.md).
+                if path.starts_with(&trash_dir) {
+                    trash = !path.to_string_lossy().ends_with(".tmp") || trash;
+                    continue;
+                }
                 match path.file_name().and_then(|n| n.to_str()) {
                     Some("todo.md") => todo = true,
                     // App-written config: ignore so routine saves don't refresh.
@@ -97,6 +110,9 @@ fn try_start(app: &AppHandle) -> Result<(), String> {
             }
             if projects {
                 let _ = handle.emit(PROJECTS_EVENT, ());
+            }
+            if trash {
+                let _ = handle.emit(TRASH_EVENT, ());
             }
         }
     });

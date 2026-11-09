@@ -19,7 +19,7 @@ use crate::storage::{data_dir, reveal_path, TRASH};
 
 /// Folders and files that hold the user's data. Anything else in the data dir
 /// (window state, temp files) is machine-specific and stays out.
-const DIRS: &[&str] = &["notes", "system", "projects", "assets"];
+const DIRS: &[&str] = &["notes", "system", "projects", "assets", crate::trash::ROOT];
 const FILES: &[&str] = &["todo.md", "settings.json", "theme.css"];
 pub const MANIFEST: &str = "dotmd-backup.json";
 
@@ -42,7 +42,8 @@ struct Manifest<'a> {
 }
 
 /// Every data file under `root/rel`, as paths relative to `root`. Skips
-/// `.trash/` folders unless asked, atomic-write temps, and symlinks.
+/// trash (`trash/`, and old `.trash/` folders) unless asked, atomic-write
+/// temps, and symlinks.
 fn collect(root: &Path, rel: &Path, trash: bool, out: &mut Vec<PathBuf>) -> io::Result<()> {
     let dir = root.join(rel);
     if !dir.is_dir() {
@@ -71,6 +72,9 @@ fn collect(root: &Path, rel: &Path, trash: bool, out: &mut Vec<PathBuf>) -> io::
 pub(crate) fn backup_files(root: &Path, trash: bool) -> io::Result<Vec<PathBuf>> {
     let mut out = Vec::new();
     for d in DIRS {
+        if *d == crate::trash::ROOT && !trash {
+            continue;
+        }
         collect(root, Path::new(d), trash, &mut out)?;
     }
     for f in FILES {
@@ -325,7 +329,8 @@ fn imported_name(dir: &Path, stem: &str, ext: &str) -> PathBuf {
 }
 
 fn is_trash(rel: &Path) -> bool {
-    rel.components().any(|c| c.as_os_str() == TRASH)
+    rel.components().next().is_some_and(|c| c.as_os_str() == crate::trash::ROOT)
+        || rel.components().any(|c| c.as_os_str() == TRASH)
 }
 
 fn merge_todos(dest: &Path, theirs: &[u8]) -> Result<usize, String> {
@@ -395,6 +400,16 @@ fn merge_settings(dest: &Path, theirs: &[u8]) -> Result<bool, String> {
     Ok(changed)
 }
 
+/// The live note with the same name as backup entry `rel` (a `notes/` .md),
+/// if it sits somewhere else (another folder under notes/).
+fn same_name_elsewhere(root: &Path, rel: &Path) -> Option<PathBuf> {
+    if rel.extension().and_then(|e| e.to_str()) != Some("md") {
+        return None;
+    }
+    let name = rel.file_stem()?.to_str()?;
+    crate::storage::find_note(&root.join("notes"), name).filter(|p| *p != root.join(rel))
+}
+
 fn merge_into(root: &Path, zip: &mut zip::ZipArchive<File>) -> Result<ImportSummary, String> {
     let mut sum = ImportSummary::default();
     each_entry(zip, |rel, bytes, when| {
@@ -409,6 +424,19 @@ fn merge_into(root: &Path, zip: &mut zip::ZipArchive<File>) -> Result<ImportSumm
                     sum.added += 1;
                 } else if !merge_settings(&dest, &bytes)? {
                     sum.skipped += 1;
+                }
+            }
+            // Notes are unique by name, not path: one may now live in a project
+            // folder (notes/<Project>/x.md) while the backup has notes/x.md.
+            "notes" if !is_trash(&rel) && !dest.exists() && same_name_elsewhere(root, &rel).is_some() => {
+                let other = same_name_elsewhere(root, &rel).unwrap_or_default();
+                if fs::read(&other).map(|b| b == bytes).unwrap_or(false) {
+                    sum.skipped += 1;
+                } else {
+                    let stem = rel.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+                    let dir = other.parent().unwrap_or(root).to_path_buf();
+                    put(&imported_name(&dir, &stem, "md"), &bytes, when)?;
+                    sum.renamed += 1;
                 }
             }
             _ if !dest.exists() => {
@@ -558,6 +586,10 @@ fn import(root: &Path, path: &Path, replace: bool) -> Result<ImportSummary, Stri
         merge_into(root, &mut zip)?
     };
     sum.snapshot = snap.display().to_string();
+    // A backup from an older build carries notes/.trash etc.: file it into trash/.
+    if let Err(e) = crate::trash::migrate_layout(root) {
+        eprintln!("trash migration after import failed: {e}");
+    }
     Ok(sum)
 }
 
@@ -606,12 +638,12 @@ mod tests {
     }
 
     fn seed(root: &Path) {
-        for d in ["notes/.trash", "system", "projects", "assets"] {
+        for d in ["notes", "trash/notes", "system", "projects", "assets"] {
             fs::create_dir_all(root.join(d)).unwrap();
         }
         fs::write(root.join("notes/a.md"), "# A").unwrap();
         fs::write(root.join("notes/b.md.tmp"), "half").unwrap();
-        fs::write(root.join("notes/.trash/1__old.md"), "old").unwrap();
+        fs::write(root.join("trash/notes/2026-11-08 10.00.00__old.md"), "old").unwrap();
         fs::write(root.join("system/scratch.md"), "jot").unwrap();
         fs::write(root.join("assets/x.png"), [1u8, 2, 3]).unwrap();
         fs::write(root.join("todo.md"), "- [ ] t").unwrap();
@@ -625,7 +657,7 @@ mod tests {
         let names: Vec<String> = backup_files(&root, false).unwrap().iter().map(|p| entry_name(p)).collect();
         assert_eq!(names, ["notes/a.md", "system/scratch.md", "assets/x.png", "todo.md"]);
         let with_trash: Vec<String> = backup_files(&root, true).unwrap().iter().map(|p| entry_name(p)).collect();
-        assert!(with_trash.contains(&"notes/.trash/1__old.md".to_string()));
+        assert!(with_trash.contains(&"trash/notes/2026-11-08 10.00.00__old.md".to_string()));
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -650,6 +682,7 @@ mod tests {
         assert!(allowed(Path::new("notes/a.md")));
         assert!(allowed(Path::new("todo.md")));
         assert!(allowed(Path::new("assets/.trash/1__x.png")));
+        assert!(allowed(Path::new("trash/projects/2026-11-08 10.00.00__web/project.md")));
         assert!(!allowed(Path::new("../evil.md")));
         assert!(!allowed(Path::new("notes/../../evil.md")));
         assert!(!allowed(Path::new("random.txt")));

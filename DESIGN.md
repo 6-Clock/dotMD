@@ -133,12 +133,23 @@ keyboard-first views, no decoration that costs a glance.
 ## Colors
 
 Every value is a CSS variable in `:root` (`src/styles/globals.css`). The user's
-`theme.css` overrides it, and `src/themes.ts` ships presets: **Sticker**
-(default, documented here), **Sticker Night** (inverted: paper stickers on
-ink), the soft light presets Paper Cream / Sage Morning / Misty Lake / Lavender
-Haze / Peach Latte, the dark presets Midnight Ink / Forest Night / Warm Ember,
-plus Solarized and Nord. Compact presets are 8 base colours expanded by
-`fromBase(base, dark)`.
+`theme.css` overrides it, and `src/themes.ts` ships six presets, all the same
+world (ink accent, colour only in the paper and ground tint): light
+**Sticker** (default, documented here), **Linen** (warm unbleached paper),
+**Fog** (cool grey paper); dark **Sticker Night** (inverted), **Graphite**
+(soft charcoal), **Cocoa** (warm dark). Each is a `Paper` (paper, ground, ink,
+muted, border, code, highlight) expanded by `fromPaper(p, dark)`; muted text
+stays ≥ 5:1 on both paper and ground. Darks are deliberately not black and
+their ink is softened, for long evenings. There is no custom accent picker:
+the theme decides everything, so no combination can break contrast. Retired
+presets map to the nearest one (`RENAMED`).
+
+**Theme picker** (Settings → Appearance): Light and Dark rows of three cards.
+Each card is a tiny drawing of the app in that theme (ground, rail with its
+sticker, a paper sheet with title, text, a highlight and a muted line), made by
+setting the theme's variables inline on `.tp-shot`. The chosen card gets a
+two-step ring in the *current* theme's ink (`--app-ink`) and a check by its
+name. It is a radio group: arrows move and pick.
 
 ### Accent (ink)
 - **Ink** (`--accent` #141414): a **fill**. Stickers, primary/ink buttons
@@ -262,7 +273,7 @@ floating. Hovered cards darken their hairline ring instead
 
 ### Stickers (the signature)
 The "you are here" states: active rail item, active tab, active tag chip,
-active theme chip, today in Calendar (`.cal-today`), Board subject headers, the
+today in Calendar (`.cal-today`), Board subject headers, the
 toast, and the current frame in the image-preview filmstrip. Recipe:
 `--sticker-bg` fill, `--sticker-ink` text, `--sticker-radius`,
 `--sticker-lift`, `rotate(var(--tilt))`, `peel-on` 200ms pop. The rule block
@@ -308,7 +319,9 @@ shape: a 3px white ring, tilt and peel.
 - **SubjectInput**: type-ahead with colour dots and "+ Create"; the field tints
   with a known subject's colour.
 - **DateInput**: typed MM / DD / YYYY with auto slashes, a written-out preview,
-  red "Not a date"; ▦ opens the native picker.
+  red "Not a date"; ▦ opens dotMD's month picker: the Calendar's mini month
+  on a floating paper card (menu shadow), year muted, today = sticker, picked =
+  ink ring, keyboard highlight = wash. Never the OS picker (it can't be themed).
 - Inputs are quiet: card or ground fill, hairline at most, 8px radius. Focus
   is a subtle shift (text darkens, the ground steps, or a 1.5px
   `--accent-strong` inset ring on steppers). Never a glow.

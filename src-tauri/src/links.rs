@@ -6,14 +6,15 @@ use std::path::PathBuf;
 
 use tauri::AppHandle;
 
-use crate::storage::{self, SearchHit, TRASH};
+use crate::storage::{self, SearchHit};
 
 /// Every `.md` that may hold links, with its note name: notes/, system/
 /// (scratch, daily), and deleted notes (so a restore keeps working links).
 fn link_files(app: &AppHandle) -> Result<Vec<(String, PathBuf)>, String> {
     let notes = storage::notes_dir(app)?;
-    let mut files = Vec::new();
-    for dir in [notes.clone(), storage::system_dir(app)?, notes.join(TRASH)] {
+    // Live notes, including project folders.
+    let mut files = storage::note_files(&notes);
+    for dir in [storage::system_dir(app)?, storage::trash_dir(app)?] {
         let Ok(entries) = fs::read_dir(&dir) else { continue };
         for entry in entries.flatten() {
             let path = entry.path();
@@ -62,7 +63,7 @@ pub fn rewrite_links(app: &AppHandle, from: &str, to: &str) -> Result<(), String
 pub fn backlinks(app: AppHandle, name: String) -> Result<Vec<SearchHit>, String> {
     let plain = format!("[[{name}]]");
     let label = format!("[[{name}|");
-    let trash = storage::notes_dir(&app)?.join(TRASH);
+    let trash = storage::trash_dir(&app)?;
     let mut hits = Vec::new();
     for (note, path) in link_files(&app)? {
         if note == name || path.starts_with(&trash) {

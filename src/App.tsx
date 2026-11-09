@@ -18,6 +18,7 @@ import { ProjectsView } from "./components/views/ProjectsView";
 import { TerminalView } from "./components/views/TerminalView";
 import { EditTodoModal } from "./components/EditTodoModal";
 import { ImageLightbox } from "./components/ImageLightbox";
+import { TaskMenu } from "./components/TaskMenu";
 import { Eyes } from "./components/Eyes";
 
 function Toast() {
@@ -93,7 +94,7 @@ function DeletedSubjectToast() {
         <Trash2 size={14} strokeWidth={2.2} />
       </span>
       <span className="toast-msg">
-        Deleted {d.subject} · {n} {n === 1 ? "task" : "tasks"}
+        Deleted {d.subject || "No subject"} · {n} {n === 1 ? "task" : "tasks"}
       </span>
       <button className="toast-action" onClick={undo}>Undo</button>
       <button className="toast-close" aria-label="Dismiss" onClick={dismiss}>
@@ -137,6 +138,16 @@ export default function App() {
       window.clearTimeout(todoTimer);
       todoTimer = window.setTimeout(() => useStore.getState().reloadTodos(), 200);
     });
+    // trash/ changed: the Files "Recently deleted" list, and the Storage view
+    // (which reloads on `trashSeq`).
+    let trashTimer: number | undefined;
+    const unTrash = listen("trash-changed", () => {
+      window.clearTimeout(trashTimer);
+      trashTimer = window.setTimeout(() => {
+        useStore.getState().refreshTrash();
+        useStore.setState((s) => ({ trashSeq: s.trashSeq + 1 }));
+      }, 200);
+    });
     // Summoning via the global shortcut brings dotMD back as you left it
     // (your tabs, or the empty background).
     const unSummon = listen("summon", () => focusEditor());
@@ -146,6 +157,8 @@ export default function App() {
       unNotes.then((f) => f());
       unTodo.then((f) => f());
       unProjects.then((f) => f());
+      unTrash.then((f) => f());
+      window.clearTimeout(trashTimer);
       window.clearTimeout(projectsTimer);
       unSummon.then((f) => f());
     };
@@ -280,6 +293,7 @@ export default function App() {
       {overlay === "search" && <SearchOverlay />}
       {editingTodo !== null && <EditTodoModal key={editingTodo} />}
       <ImageLightbox />
+      <TaskMenu />
       <Toast />
       <DeletedToast />
       <DeletedSubjectToast />

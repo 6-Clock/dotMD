@@ -19,7 +19,21 @@
 //! The project's tasks are the to-dos whose subject equals `name` (todo.md);
 //! progress is computed from them, never stored. Files are named by a slug of
 //! the name (subjects may hold `:` or `/`), so lookups always go by `name`.
-//! Delete moves the file to `projects/.trash/` like notes.
+//! Delete moves the file to `trash/projects/<stamp>__<slug>/project.md`, with
+//! the project's tasks (and colour) beside it in `tasks.md`, so a restore
+//! from Storage → Trash brings everything back (see `trash`).
+//!
+//! **Project folders.** A project's linked notes live in `notes/<file stem>/`
+//! (the slug, made unique like the project file: "web 2" beside "Web"), so a
+//! terminal (or an AI tool like Claude Code) opened there sees exactly that
+//! project's notes. Note names stay unique app-wide, so `[[links]]` never care
+//! which folder a note is in. `sync_folders` keeps disk and front matter in
+//! step: linked notes sitting loose in notes/ (or in a folder no linking
+//! project owns) move into their project's folder (first project by name
+//! wins when several link it), and a `.md`
+//! someone drops into a project folder joins that project. Unlinking,
+//! renaming and deleting move files explicitly first, so the sync never
+//! undoes them.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -27,7 +41,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
-use crate::storage::{self, TRASH};
+use crate::storage;
+use crate::todo::Todo;
 
 #[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
 pub struct Project {
@@ -54,9 +69,7 @@ pub(crate) fn projects_dir(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 fn trash_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = projects_dir(app)?.join(TRASH);
-    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    Ok(dir)
+    crate::trash::projects_dir(app)
 }
 
 // Front matter -----------------------------------------------------------
@@ -235,12 +248,153 @@ fn free_path(dir: &Path, name: &str) -> PathBuf {
     path
 }
 
-/// Every `.md` in projects/ and its trash — for link rewrites and image scans.
+/// Every project page: projects/*.md and the deleted ones
+/// (trash/projects/<folder>/project.md) — for link rewrites and image scans.
 pub(crate) fn project_files(app: &AppHandle) -> Vec<PathBuf> {
     let Ok(dir) = projects_dir(app) else { return Vec::new() };
     let mut files = md_files(&dir);
-    files.extend(md_files(&dir.join(TRASH)));
+    if let Ok(trash) = trash_dir(app) {
+        if let Ok(entries) = fs::read_dir(&trash) {
+            files.extend(entries.flatten().map(|e| e.path().join("project.md")).filter(|p| p.is_file()));
+        }
+    }
     files
+}
+
+// Project folders --------------------------------------------------------
+
+/// `notes/<file stem>/` for the project stored at `file` (not created). The
+/// stem is the slug made unique by `free_path` ("web 2" when "Web" exists, or
+/// "A-B 2" next to "A-B"), so two projects never share a folder.
+fn folder_of(notes: &Path, file: &Path) -> PathBuf {
+    notes.join(file.file_stem().and_then(|s| s.to_str()).unwrap_or("project"))
+}
+
+/// Where a note should live once `gone` no longer claims it: the folder of the
+/// first other project (by name) that links it, else notes/ itself.
+fn home_without(notes: &Path, projects: &[(PathBuf, Project)], note: &str, gone: &str) -> PathBuf {
+    projects
+        .iter()
+        .filter(|(_, p)| p.name != gone && p.notes.iter().any(|n| n == note))
+        .map(|(f, _)| folder_of(notes, f))
+        .next()
+        .unwrap_or_else(|| notes.to_path_buf())
+}
+
+/// Every project's file + front matter, sorted by name.
+fn sorted(app: &AppHandle) -> Result<Vec<(PathBuf, Project)>, String> {
+    let mut list: Vec<(PathBuf, Project)> = all(app)?.into_iter().map(|(f, p, _)| (f, p)).collect();
+    list.sort_by(|a, b| a.1.name.to_lowercase().cmp(&b.1.name.to_lowercase()));
+    Ok(list)
+}
+
+/// Move one note file into `dir` (created on demand). Skips silently if a
+/// file of that name is already there.
+fn move_into(path: &Path, dir: &Path) -> Result<bool, String> {
+    let Some(file) = path.file_name() else { return Ok(false) };
+    let dst = dir.join(file);
+    if dst == path || dst.exists() {
+        return Ok(false);
+    }
+    fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    fs::rename(path, &dst).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+/// Move every note out of project `name`'s folder (to the next project that
+/// links it, or notes/), then drop the folder if it's empty. Used when the
+/// project is deleted or merged away.
+fn empty_folder(app: &AppHandle, dir: &Path, name: &str) -> Result<(), String> {
+    let notes = storage::notes_dir(app)?;
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    let projects = sorted(app)?;
+    for (note, path) in storage::note_files(&notes) {
+        if path.parent() == Some(dir) {
+            move_into(&path, &home_without(&notes, &projects, &note, name))?;
+        }
+    }
+    storage::remove_if_empty(&notes, Some(dir));
+    Ok(())
+}
+
+/// Bring disk and front matter into step (see the module docs). Returns
+/// whether anything changed. Idempotent: a second run does nothing.
+pub(crate) fn sync_folders(app: &AppHandle) -> Result<bool, String> {
+    let notes = storage::notes_dir(app)?;
+    let mut changed = false;
+    let mut projects = all(app)?;
+    projects.sort_by(|a, b| a.1.name.to_lowercase().cmp(&b.1.name.to_lowercase()));
+    // One read of notes/ for the whole sync.
+    let files = storage::note_files(&notes);
+
+    // 1. A .md dropped into a project's folder joins that project.
+    for (path, p, body) in projects.iter_mut() {
+        let dir = folder_of(&notes, path);
+        if !dir.is_dir() {
+            continue;
+        }
+        let mut added = false;
+        for (note, file) in &files {
+            if file.parent() == Some(dir.as_path()) && !p.notes.contains(note) {
+                p.notes.push(note.clone());
+                added = true;
+            }
+        }
+        if added {
+            storage::write_atomic(path, &render(p, body))?;
+            changed = true;
+        }
+    }
+
+    // 2. A linked note that isn't in the folder of any project linking it
+    //    (loose in notes/, or left in an old folder) moves to the first one's.
+    let folders: Vec<(PathBuf, &Project)> = projects.iter().map(|(f, p, _)| (folder_of(&notes, f), p)).collect();
+    for (note, file) in &files {
+        let homes: Vec<&PathBuf> =
+            folders.iter().filter(|(_, p)| p.notes.contains(note)).map(|(d, _)| d).collect();
+        let Some(first) = homes.first() else { continue };
+        let here = file.parent().map(Path::to_path_buf).unwrap_or_default();
+        if !homes.iter().any(|d| **d == here) && move_into(file, first)? {
+            if here != notes {
+                storage::remove_if_empty(&notes, Some(&here));
+            }
+            changed = true;
+        }
+    }
+    Ok(changed)
+}
+
+/// `notes/<project>/`, created if needed: where "Open terminal here" starts.
+#[tauri::command]
+pub fn project_folder(app: AppHandle, name: String) -> Result<String, String> {
+    let Some((file, _, _)) = find(&app, &name)? else {
+        return Err("Project not found".into());
+    };
+    let dir = folder_of(&storage::notes_dir(&app)?, &file);
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir.display().to_string())
+}
+
+/// Open the project's folder in the OS file manager.
+#[tauri::command]
+pub fn open_project_folder(app: AppHandle, name: String) -> Result<(), String> {
+    let dir = project_folder(app, name)?;
+    #[cfg(target_os = "windows")]
+    let opener = "explorer";
+    #[cfg(target_os = "macos")]
+    let opener = "open";
+    #[cfg(target_os = "linux")]
+    let opener = "xdg-open";
+    std::process::Command::new(opener).arg(&dir).spawn().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Run the folder sync from the frontend (after outside file changes).
+#[tauri::command]
+pub fn sync_project_folders(app: AppHandle) -> Result<bool, String> {
+    sync_folders(&app)
 }
 
 // Commands ---------------------------------------------------------------
@@ -276,10 +430,23 @@ pub fn create_project(app: AppHandle, name: String) -> Result<Project, String> {
 /// renames go through `rename_project`.
 #[tauri::command]
 pub fn update_project(app: AppHandle, project: Project) -> Result<(), String> {
-    let Some((path, _, body)) = find(&app, &project.name)? else {
+    let Some((path, old, body)) = find(&app, &project.name)? else {
         return Err("Project not found".into());
     };
-    storage::write_atomic(&path, &render(&project, &body))
+    // Unlinked notes leave this project's folder before the front matter
+    // changes, so the sync doesn't pull them straight back in.
+    let notes = storage::notes_dir(&app)?;
+    let dir = folder_of(&notes, &path);
+    let others = sorted(&app)?;
+    for note in old.notes.iter().filter(|n| !project.notes.contains(n)) {
+        let file = dir.join(format!("{note}.md"));
+        if file.is_file() {
+            move_into(&file, &home_without(&notes, &others, note, &project.name))?;
+        }
+    }
+    storage::write_atomic(&path, &render(&project, &body))?;
+    sync_folders(&app)?;
+    Ok(())
 }
 
 /// Rename a project (called when its subject is renamed). Renaming onto an
@@ -312,53 +479,95 @@ pub fn rename_project(app: AppHandle, from: String, to: String) -> Result<String
             }
         }
         storage::write_atomic(&dst_path, &render(&dst, &dst_body))?;
-        return to_trash(&app, &src_path, &src.name);
+        let src_dir = folder_of(&storage::notes_dir(&app)?, &src_path);
+        // Its tasks were renamed into the target, so none go with it.
+        let stem = to_trash(&app, &src_path, &src.name, &[], "")?;
+        // The merged-away project's notes join the target's folder.
+        empty_folder(&app, &src_dir, &src.name)?;
+        sync_folders(&app)?;
+        return Ok(stem);
     }
     let renamed = Project { name: to.clone(), ..src };
     let dir = projects_dir(&app)?;
     // Keep the file name when it still fits the new slug; else move it.
     let wanted = dir.join(format!("{}.md", slug(&to)));
     let target = if wanted == src_path || !wanted.exists() { wanted } else { free_path(&dir, &to) };
+    // The folder follows the file name. Moved first, and never left half
+    // done: if Windows won't rename the folder (a terminal is open in it),
+    // the notes move over one by one instead.
+    let notes = storage::notes_dir(&app)?;
+    let (old_dir, new_dir) = (folder_of(&notes, &src_path), folder_of(&notes, &target));
+    if old_dir != new_dir && old_dir.is_dir() {
+        let renamed_dir = !new_dir.exists() && fs::rename(&old_dir, &new_dir).is_ok();
+        if !renamed_dir {
+            for (_, path) in storage::note_files(&notes) {
+                if path.parent() == Some(old_dir.as_path()) {
+                    move_into(&path, &new_dir)?;
+                }
+            }
+            storage::remove_if_empty(&notes, Some(&old_dir));
+        }
+    }
     // A body still holding only the seeded "# Old name" follows the rename.
     let body = if src_body.trim() == format!("# {from}") { String::new() } else { src_body };
     storage::write_atomic(&target, &render(&renamed, &body))?;
     if target != src_path {
         let _ = fs::remove_file(&src_path);
     }
+    sync_folders(&app)?;
     Ok(String::new())
 }
 
-fn to_trash(app: &AppHandle, path: &Path, name: &str) -> Result<String, String> {
+/// Move a project page into its own trash folder, with its tasks and colour
+/// beside it. Returns the folder name (the restore id).
+fn to_trash(app: &AppHandle, path: &Path, name: &str, tasks: &[Todo], colour: &str) -> Result<String, String> {
     let trash = trash_dir(app)?;
-    let stamp = chrono::Local::now().timestamp();
-    let base = slug(name);
-    let mut stem = format!("{stamp}__{base}");
-    let mut n = 1;
-    while trash.join(format!("{stem}.md")).exists() {
-        stem = format!("{stamp}-{n}__{base}");
-        n += 1;
-    }
-    fs::rename(path, trash.join(format!("{stem}.md"))).map_err(|e| e.to_string())?;
+    let stem = crate::trash::free_stem(&trash, &slug(name), "");
+    let folder = trash.join(&stem);
+    fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+    fs::rename(path, folder.join("project.md")).map_err(|e| e.to_string())?;
+    crate::trash::write_project_tasks(&folder, name, tasks, colour)?;
     Ok(stem)
 }
 
-/// Move the project file to projects/.trash/. Only the file: the frontend
-/// removes the project's tasks from todo.md itself (and undoes both).
-/// Returns the trash stem for undo.
+/// Move the project to trash/projects/<folder>/. The frontend removes the
+/// tasks from todo.md and passes them (and the subject colour) here, so a
+/// restore from Storage → Trash brings them back. Returns the folder name.
 #[tauri::command]
-pub fn delete_project(app: AppHandle, name: String) -> Result<String, String> {
+pub fn delete_project(
+    app: AppHandle,
+    name: String,
+    tasks: Option<Vec<Todo>>,
+    colour: Option<String>,
+) -> Result<String, String> {
     match find(&app, &name)? {
-        Some((path, p, _)) => to_trash(&app, &path, &p.name),
+        Some((path, p, _)) => {
+            let dir = folder_of(&storage::notes_dir(&app)?, &path);
+            let stem = to_trash(&app, &path, &p.name, &tasks.unwrap_or_default(), &colour.unwrap_or_default())?;
+            // Its notes go back to notes/ (or another project that links them).
+            empty_folder(&app, &dir, &p.name)?;
+            Ok(stem)
+        }
         None => Ok(String::new()),
     }
 }
 
+/// What a restore hands back: the tasks that were deleted with the project
+/// and its colour. Undo ignores them (it puts the tasks back in place itself);
+/// Storage → Trash appends them to todo.md.
+#[derive(Serialize)]
+pub struct RestoredProject {
+    pub tasks: Vec<Todo>,
+    pub colour: String,
+}
+
 #[tauri::command]
-pub fn restore_project(app: AppHandle, stem: String) -> Result<(), String> {
+pub fn restore_project(app: AppHandle, stem: String) -> Result<RestoredProject, String> {
     if stem.is_empty() || stem.contains("..") || stem.contains('/') || stem.contains('\\') {
         return Err("Invalid trash id".into());
     }
-    let src = trash_dir(&app)?.join(format!("{stem}.md"));
+    let folder = trash_dir(&app)?.join(&stem);
+    let src = folder.join("project.md");
     if !src.is_file() {
         return Err("Trashed project not found".into());
     }
@@ -367,7 +576,12 @@ pub fn restore_project(app: AppHandle, stem: String) -> Result<(), String> {
     if find(&app, &p.name)?.is_some() {
         return Err(format!("A project named {} already exists", p.name));
     }
-    fs::rename(&src, free_path(&projects_dir(&app)?, &p.name)).map_err(|e| e.to_string())
+    let extras = crate::trash::read_project_tasks(&folder);
+    fs::rename(&src, free_path(&projects_dir(&app)?, &p.name)).map_err(|e| e.to_string())?;
+    // Only tasks.md is left; the folder goes.
+    fs::remove_dir_all(&folder).map_err(|e| e.to_string())?;
+    sync_folders(&app)?;
+    Ok(RestoredProject { tasks: extras.tasks, colour: extras.colour })
 }
 
 #[cfg(test)]

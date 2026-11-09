@@ -2,7 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { loadTheme, saveTheme } from "./api";
-import { LEGACY_THEME_VERSION, THEMES, THEME_VERSION, buildThemeCss, injectTheme, presetName } from "./themes";
+import { THEMES, THEME_VERSION, buildThemeCss, injectTheme, presetName } from "./themes";
 import "@fontsource-variable/inter/opsz.css";
 import "@fontsource-variable/inter/opsz-italic.css";
 import "./styles/globals.css";
@@ -25,11 +25,11 @@ for (const key of Object.keys(localStorage)) {
 async function applyUserTheme() {
   try {
     let css = await loadTheme();
-    if (!css.includes(THEME_VERSION) && !css.includes(LEGACY_THEME_VERSION)) {
+    if (!css.includes(THEME_VERSION)) {
       const name = presetName(localStorage.getItem("dotmd-theme"));
       css = buildThemeCss(THEMES[name]);
       localStorage.setItem("dotmd-theme", name);
-      localStorage.removeItem("dotmd-accent"); // the old preset's accent no longer applies
+      localStorage.removeItem("dotmd-accent"); // custom accents are gone
       saveTheme(css).catch((e) => console.error(e));
     }
     injectTheme(css);

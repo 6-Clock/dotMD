@@ -4,6 +4,10 @@ export type MenuItem = {
   label: string; // "-" renders a separator
   danger?: boolean;
   disabled?: boolean;
+  /** Keep the menu open after the click (arming a confirm, opening a submenu). */
+  keepOpen?: boolean;
+  /** Shown armed: a solid red "Click again…" row. */
+  armed?: boolean;
   onClick?: () => void;
 };
 
@@ -51,12 +55,12 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
           <div className="context-sep" key={`sep${i}`} />
         ) : (
           <button
-            key={it.label}
-            className={`context-item ${it.danger ? "danger" : ""}`}
+            key={`${i}:${it.label}`}
+            className={`context-item ${it.danger ? "danger" : ""} ${it.armed ? "armed" : ""}`}
             disabled={it.disabled}
             onClick={() => {
               it.onClick?.();
-              onClose();
+              if (!it.keepOpen) onClose();
             }}
           >
             {it.label}

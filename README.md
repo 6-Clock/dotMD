@@ -5,8 +5,7 @@
 <h1 align="center">dotMD</h1>
 
 <p align="center">
-  A fast, local Markdown scratchpad for Windows.<br>
-  Summon it from anywhere, jot, get out of the way.
+  A fast, local Markdown scratchpad for Windows.
 </p>
 
 <p align="center">
@@ -79,10 +78,15 @@ Uninstall it from **Settings → Apps** like any other app. Your notes in
   and an outline beside the page on wide windows
 - Inline `#tags` with a tag filter, full-text search
 - Pasted images saved next to your notes and shown inline
-- Deleting is never permanent by accident: notes go to a trash with undo
+- Deleting is never permanent by accident: notes, images, tasks and whole
+  projects (with their tasks) go to one trash folder, with undo, and come
+  back from Storage
 
 **Planning**
-- To-dos with subjects, deadlines and notes, kept in a readable `todo.md`
+- To-dos with subjects, deadlines and notes, kept in a readable `todo.md`;
+  type due dates or pick them from a small calendar
+- Right-click any task (To-do list, Board, Calendar) to mark it done, edit or
+  delete it
 - **Board** (one colour box per subject), **Calendar** (an agenda by day plus
   a whole-year view) and **Projects** (a page per subject with progress,
   linked notes and a deadline planner)
@@ -101,9 +105,11 @@ Uninstall it from **Settings → Apps** like any other app. Your notes in
 </table>
 
 **Housekeeping**
-- **Storage** view: disk usage, unused images, trash, tag and subject cleanup
+- **Storage** view: disk usage and every image, note, task, project, subject
+  and tag in one place, with right-click menus, a refresh button and the trash
 - Zip backups you can export and import (merge or replace)
-- A built-in terminal, a dozen themes plus an accent colour, a tray icon
+- A built-in terminal, six themes (four light, two dark) picked from preview
+  cards, a tray icon
 
 ## Your data
 
@@ -111,10 +117,12 @@ Release builds keep everything in `%APPDATA%\com.dotmd.app\`:
 
 ```
 system/scratch.md    the inbox ("Untitled")
-notes/*.md           your notes   (deleted notes wait in notes/.trash/)
+notes/*.md           your notes (a project's notes in notes/<Project>/)
 assets/              pasted images, linked from notes as ../assets/<file>
 projects/*.md        one page per project (front matter + free text)
 todo.md              your to-dos, as a Markdown checklist
+trash/               everything deleted, by type (notes, images, projects
+                     with their tasks, tasks.md), dated, until you empty it
 settings.json        settings and keybindings
 theme.css            your theme
 ```
@@ -147,7 +155,7 @@ refreshes. Your unsaved edits always win.
 | `Ctrl+J` | Switch between the editor and your to-dos |
 | `Ctrl+Shift+B` / `C` / `P` | Board / Calendar / Projects |
 | `Ctrl+Shift+U` | Storage |
-| ``Ctrl+` `` | Terminal |
+| ``Ctrl+` `` · `Ctrl+Shift+T` | Terminal · new terminal |
 | `Ctrl+B` | Show / hide the side panel |
 | `Ctrl+Shift+M` | Focus + typewriter mode |
 | `Ctrl +` / `Ctrl −` / `Ctrl 0` | Page zoom |
@@ -221,7 +229,8 @@ src/                       Frontend: React 19, TypeScript, Vite, Tailwind v4
 
 src-tauri/src/             Backend: Rust
 ├── lib.rs                 Startup, plugins, global shortcut, window behaviour
-├── storage.rs             Notes: read, save, rename, search, trash, tags
+├── storage.rs             Notes: read, save, rename, delete, search, tags
+├── trash.rs               The trash/ folder: deleted notes, images, projects, tasks
 ├── todo.rs                Reads and writes todo.md
 ├── projects.rs            Project pages (front matter + body)
 ├── links.rs               [[links]], backlinks, rewriting links on rename

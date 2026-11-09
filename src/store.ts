@@ -22,6 +22,16 @@ export type OpenMode = "preview" | "pin";
 export type DocMode = "editing" | "markdown" | "viewing";
 
 /** Page zoom steps (Google Docs-like). */
+/** A task's identity that survives reloads (its index doesn't). */
+export const todoKey = (t: api.Todo) => `${t.created}${t.subject}${t.text}`;
+/** Where `t` is in `todos` now: the same object, else the same key; -1 if gone. */
+export function todoIndex(todos: api.Todo[], t: api.Todo): number {
+  const same = todos.indexOf(t);
+  if (same >= 0) return same;
+  const k = todoKey(t);
+  return todos.findIndex((x) => todoKey(x) === k);
+}
+
 export const ZOOM_STEPS = [0.5, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 2];
 
 type FiledToast = { name: string; prevContent: string };
@@ -53,6 +63,8 @@ type AppState = {
   recording: string | null; // keybind capture in progress (settings UI)
   editingTodo: number | null; // index of todo open in the editor modal
   lightbox: { src: string; alt: string } | null; // enlarged editor image
+  taskMenu: { x: number; y: number; todo: api.Todo } | null; // right-click menu on a task card
+  trashSeq: number; // bumped when trash/ changes on disk (Storage reloads on it)
   tabs: string[]; // open editor tabs (note names), in order
   previewTab: string | null; // the one tab the next preview open replaces
 
@@ -107,9 +119,15 @@ type AppState = {
   addTodo: (text: string, fields?: TodoFields) => void;
   toggleTodoAt: (i: number) => void;
   deleteTodoAt: (i: number) => void;
+  /** Delete several tasks; one undo toast puts them all back in place. */
+  deleteTodosAt: (is: number[]) => void;
+  /** Append tasks coming back from the trash (and give a project its colour back). */
+  restoreTrashedTasks: (todos: api.Todo[], colour?: { subject: string; swatch: string }) => void;
+  setDoneAt: (is: number[], done: boolean) => void;
   updateTodoAt: (i: number, patch: Partial<api.Todo>) => void;
   setEditingTodo: (i: number | null) => void;
   setLightbox: (l: { src: string; alt: string } | null) => void;
+  setTaskMenu: (m: { x: number; y: number; index: number } | null) => void;
   ensureSubjectColors: () => void;
   setSubjectColor: (subject: string, swatch: string) => void;
   renameSubject: (from: string, to: string) => void;
@@ -145,6 +163,7 @@ type DeletedSubject = {
   removed: { index: number; todo: api.Todo }[]; // original positions, ascending
   swatch?: string;
   projectStem?: string; // the subject's project file, trashed with it
+  tasksStamp?: Promise<string>; // trash/tasks.md group (non-project subjects)
 };
 
 /** Pull every task of `subject` out of `todos`, remembering where each sat. */
@@ -199,6 +218,8 @@ export const useStore = create<AppState>((set, get) => ({
   recording: null,
   editingTodo: null,
   lightbox: null,
+  taskMenu: null,
+  trashSeq: 0,
   tabs: [SCRATCH],
   previewTab: null,
 
@@ -280,6 +301,8 @@ export const useStore = create<AppState>((set, get) => ({
   // and the buffer is clean, fall back to scratch if it was deleted, and never
   // clobber unsaved edits.
   syncExternalNotes: async () => {
+    // A note dropped into a project folder (e.g. by Claude Code) joins it.
+    if (await api.syncProjectFolders().catch(() => false)) await get().refreshProjects();
     await get().refreshNotes();
     await get().refreshTrash();
     const { currentNote, content, lastSaved, notes } = get();
@@ -625,8 +648,47 @@ export const useStore = create<AppState>((set, get) => ({
     persistTodos(todos);
   },
 
-  deleteTodoAt: (i) => {
-    const todos = get().todos.filter((_, j) => j !== i);
+  deleteTodoAt: (i) => get().deleteTodosAt([i]),
+
+  deleteTodosAt: (is) => {
+    const all = get().todos;
+    const drop = new Set(is.filter((i) => i >= 0 && i < all.length));
+    if (!drop.size) return;
+    const gone = [...drop].sort((a, b) => a - b).map((i) => ({ i, todo: all[i] }));
+    const todos = all.filter((_, j) => !drop.has(j));
+    set({ todos });
+    persistTodos(todos);
+    // Kept in trash/tasks.md, so Storage → Trash can bring them back later.
+    const stamp = api.trashTasks(gone.map((g) => g.todo)).catch(() => "");
+    const msg = gone.length === 1 ? `Deleted "${gone[0].todo.text}"` : `Deleted ${gone.length} tasks`;
+    // Undo puts each back where it was (ascending, so earlier inserts don't
+    // shift later ones) and drops the trash copy.
+    get().showUndo(msg, async () => {
+      const now = [...get().todos];
+      for (const { i, todo } of gone) now.splice(Math.min(i, now.length), 0, todo);
+      set({ todos: now });
+      persistTodos(now);
+      const s = await stamp;
+      if (s) api.untrashTasks(s).catch(() => {});
+    });
+  },
+
+  restoreTrashedTasks: (back, colour) => {
+    if (back.length) {
+      const todos = [...get().todos, ...back];
+      set({ todos });
+      persistTodos(todos);
+    }
+    const s = get().settings;
+    if (s && colour?.swatch && !s.subject_colors?.[colour.subject]) {
+      get().updateSettings({ subject_colors: { ...(s.subject_colors ?? {}), [colour.subject]: colour.swatch } });
+    }
+    get().ensureSubjectColors();
+  },
+
+  setDoneAt: (is, done) => {
+    const pick = new Set(is);
+    const todos = get().todos.map((t, j) => (pick.has(j) ? { ...t, done } : t));
     set({ todos });
     persistTodos(todos);
   },
@@ -640,6 +702,11 @@ export const useStore = create<AppState>((set, get) => ({
 
   setEditingTodo: (i) => set({ editingTodo: i }),
   setLightbox: (l) => set({ lightbox: l }),
+  // The menu remembers the task, not its index, so a reload can't retarget it.
+  setTaskMenu: (m) => {
+    const todo = m ? get().todos[m.index] : undefined;
+    set({ taskMenu: m && todo ? { x: m.x, y: m.y, todo } : null });
+  },
 
   // Give every subject that has no colour yet the next free iOS swatch.
   ensureSubjectColors: () => {
@@ -690,13 +757,17 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   // Remove every task in a subject (and its colour); Undo restores both.
+  // "" = the tasks with no subject (Storage → "No subject" row).
   deleteSubject: (subject) => {
-    if (!subject) return;
     const { kept: todos, removed } = splitOut(get().todos, subject);
     if (!removed.length) return;
     const s = get().settings;
     const swatch = s?.subject_colors?.[subject];
-    set({ todos, deletedSubject: { subject, removed, swatch }, editingTodo: null });
+    const isProject = get().projects.some((p) => p.name === subject);
+    // Plain subjects: the tasks go to trash/tasks.md. A project keeps its tasks
+    // in its own trash folder instead (below).
+    const tasksStamp = isProject ? undefined : api.trashTasks(removed.map((r) => r.todo)).catch(() => "");
+    set({ todos, deletedSubject: { subject, removed, swatch, tasksStamp }, editingTodo: null });
     persistTodos(todos);
     if (s && swatch) {
       const map = { ...(s.subject_colors ?? {}) };
@@ -704,10 +775,10 @@ export const useStore = create<AppState>((set, get) => ({
       get().updateSettings({ subject_colors: map });
     }
     // A project's subject takes its page with it (Undo brings both back).
-    if (get().projects.some((p) => p.name === subject)) {
+    if (isProject) {
       if (get().activeProject === subject) set({ activeProject: null });
       api
-        .deleteProject(subject)
+        .deleteProject(subject, removed.map((r) => r.todo), swatch ?? "")
         .then((projectStem) => {
           const d = get().deletedSubject;
           if (d && d.subject === subject) set({ deletedSubject: { ...d, projectStem } });
@@ -727,6 +798,11 @@ export const useStore = create<AppState>((set, get) => ({
     const s = get().settings;
     if (s && d.swatch && !s.subject_colors?.[d.subject]) {
       get().updateSettings({ subject_colors: { ...(s.subject_colors ?? {}), [d.subject]: d.swatch } });
+    }
+    if (d.tasksStamp) {
+      d.tasksStamp.then((s) => {
+        if (s) api.untrashTasks(s).catch(() => {});
+      });
     }
     if (d.projectStem) {
       api
@@ -848,7 +924,9 @@ export const useStore = create<AppState>((set, get) => ({
       delete map[name];
       get().updateSettings({ subject_colors: map });
     }
-    const stem = await api.deleteProject(name).catch((e) => {
+    // Its tasks + colour go into the project's trash folder, so restoring it
+    // from Storage → Trash brings them back too.
+    const stem = await api.deleteProject(name, removed.map((r) => r.todo), swatch ?? "").catch((e) => {
       console.error("delete project failed", e);
       return "";
     });

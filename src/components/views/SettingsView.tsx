@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
-import { RotateCcw } from "lucide-react";
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { Check, RotateCcw } from "lucide-react";
 import { useStore } from "../../store";
 import * as api from "../../api";
 import { ACTIONS, comboFromEvent, resolveBindings } from "../../actions";
-import { THEMES, buildThemeCss, injectTheme, presetName } from "../../themes";
+import { DARK_THEMES, LIGHT_THEMES, THEMES, buildThemeCss, injectTheme, presetName } from "../../themes";
 import { PanelHeader } from "../PanelHeader";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { todayIso } from "../../dates";
@@ -19,9 +19,6 @@ export function SettingsView() {
   const setRecording = useStore((s) => s.setRecording);
 
   const [themeName, setThemeName] = useState(() => presetName(localStorage.getItem("dotmd-theme")));
-  const [accent, setAccent] = useState(
-    () => localStorage.getItem("dotmd-accent") || THEMES[presetName(localStorage.getItem("dotmd-theme"))]["--accent"],
-  );
 
   // Capture the next key combo while recording.
   useEffect(() => {
@@ -45,12 +42,12 @@ export function SettingsView() {
 
   if (!settings) return <div className="list-empty">Loading…</div>;
 
-  const applyTheme = (name: string, acc: string) => {
-    const css = buildThemeCss({ ...THEMES[name], "--accent": acc });
+  const pickTheme = (name: string) => {
+    setThemeName(name);
+    const css = buildThemeCss(THEMES[name]);
     injectTheme(css);
     api.saveTheme(css).catch((e) => console.error(e));
     localStorage.setItem("dotmd-theme", name);
-    localStorage.setItem("dotmd-accent", acc);
   };
 
   const bindings = resolveBindings(settings.keybindings);
@@ -59,10 +56,18 @@ export function SettingsView() {
     <div className="settings-view">
       <PanelHeader title="Settings" />
 
+      <h2 className="list-section">Appearance</h2>
+      <div className="list-group">
+        <ThemePicker value={themeName} onPick={pickTheme} />
+      </div>
+
       <h2 className="list-section">Editor</h2>
       <div className="list-group">
         <label className="form-row">
-          <span className="form-label grow">Autosave delay</span>
+          <span className="form-text">
+            <span className="form-label">Autosave delay</span>
+            <span className="form-desc">How long after you stop typing to save.</span>
+          </span>
           <span className="stepper">
             <input
               type="number"
@@ -74,43 +79,33 @@ export function SettingsView() {
             <span className="unit">ms</span>
           </span>
         </label>
-        <label className="form-row">
-          <span className="form-label grow">Styled view by default</span>
-          <input
-            type="checkbox"
-            className="switch"
-            checked={settings.styled_default}
-            onChange={(e) => updateSettings({ styled_default: e.target.checked })}
-          />
-        </label>
-        <label className="form-row">
-          <span className="form-label grow">Focus mode</span>
-          <input
-            type="checkbox"
-            className="switch"
-            checked={settings.focus_mode}
-            onChange={(e) => updateSettings({ focus_mode: e.target.checked })}
-          />
-        </label>
-        <label className="form-row">
-          <span className="form-label grow">Typewriter scrolling</span>
-          <input
-            type="checkbox"
-            className="switch"
-            checked={settings.typewriter}
-            onChange={(e) => updateSettings({ typewriter: e.target.checked })}
-          />
-        </label>
+        <SwitchRow
+          label="Styled view by default"
+          desc="Open notes in Editing mode, with Markdown marks hidden."
+          checked={settings.styled_default}
+          onChange={(v) => updateSettings({ styled_default: v })}
+        />
+        <SwitchRow
+          label="Focus mode"
+          desc="Fade every paragraph except the one you're in."
+          checked={settings.focus_mode}
+          onChange={(v) => updateSettings({ focus_mode: v })}
+        />
+        <SwitchRow
+          label="Typewriter scrolling"
+          desc={`Keep the line you're typing centred. ${bindings.toggleFocus} toggles both.`}
+          checked={settings.typewriter}
+          onChange={(v) => updateSettings({ typewriter: v })}
+        />
       </div>
-      <p className="list-footnote">
-        Focus fades every paragraph but the one you're in; typewriter keeps the line you're typing
-        centred. {bindings.toggleFocus} toggles both.
-      </p>
 
-      <h2 className="list-section">Window &amp; shortcut</h2>
+      <h2 className="list-section">Window</h2>
       <div className="list-group">
         <div className="form-row">
-          <span className="form-label grow">Global summon</span>
+          <span className="form-text">
+            <span className="form-label">Global summon</span>
+            <span className="form-desc">Shows dotMD from any app. A new one applies after a restart.</span>
+          </span>
           <button
             className={`kbd-btn ${recording === "global" ? "recording" : ""}`}
             onClick={() => setRecording("global")}
@@ -118,71 +113,22 @@ export function SettingsView() {
             {recording === "global" ? "Press keys…" : settings.global_shortcut}
           </button>
         </div>
-        <label className="form-row">
-          <span className="form-label grow">Hide window on blur</span>
-          <input
-            type="checkbox"
-            className="switch"
-            checked={settings.hide_on_blur}
-            onChange={(e) => updateSettings({ hide_on_blur: e.target.checked })}
-          />
-        </label>
-        <label className="form-row">
-          <span className="form-label grow">Close button hides to tray</span>
-          <input
-            type="checkbox"
-            className="switch"
-            checked={settings.close_to_tray}
-            onChange={(e) => updateSettings({ close_to_tray: e.target.checked })}
-          />
-        </label>
+        <SwitchRow
+          label="Hide when it loses focus"
+          desc="Click another window and dotMD steps aside."
+          checked={settings.hide_on_blur}
+          onChange={(v) => updateSettings({ hide_on_blur: v })}
+        />
+        <SwitchRow
+          label="Close button hides to tray"
+          desc="Keep dotMD running so the summon shortcut works."
+          checked={settings.close_to_tray}
+          onChange={(v) => updateSettings({ close_to_tray: v })}
+        />
       </div>
-      <p className="list-footnote">A new summon shortcut takes effect after restarting dotMD.</p>
-
-      <h2 className="list-section">Appearance</h2>
-      <div className="list-group">
-        <div className="form-row column">
-          <span className="form-label">Theme</span>
-          <div className="theme-choices">
-            {Object.keys(THEMES).map((name) => (
-              <button
-                key={name}
-                className={`theme-chip ${themeName === name ? "active" : ""}`}
-                onClick={() => {
-                  setThemeName(name);
-                  setAccent(THEMES[name]["--accent"]);
-                  applyTheme(name, THEMES[name]["--accent"]);
-                }}
-              >
-                <span
-                  className="theme-swatch"
-                  style={{ background: THEMES[name]["--panel-bg"], borderColor: THEMES[name]["--border"] }}
-                >
-                  <span style={{ background: THEMES[name]["--accent"] }} />
-                </span>
-                {name}
-              </button>
-            ))}
-          </div>
-        </div>
-        <label className="form-row">
-          <span className="form-label grow">Accent colour</span>
-          <input
-            type="color"
-            className="color-input"
-            value={accent}
-            onChange={(e) => {
-              setAccent(e.target.value);
-              applyTheme(themeName, e.target.value);
-            }}
-          />
-        </label>
-      </div>
-
-      <StorageSection />
-      <BackupSection />
 
       <h2 className="list-section">Keybindings</h2>
+      <p className="list-lead">Click a shortcut, then press the new keys. Esc cancels.</p>
       <div className="list-group">
         {ACTIONS.map((a) => {
           const overridden = a.id in settings.keybindings;
@@ -209,7 +155,95 @@ export function SettingsView() {
           );
         })}
       </div>
-      <p className="list-footnote">Click a shortcut, then press the new combo. Esc cancels.</p>
+
+      <StorageSection />
+      <BackupSection />
+    </div>
+  );
+}
+
+/** One switch row: label, a line explaining it, the switch. */
+function SwitchRow(props: { label: string; desc: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="form-row">
+      <span className="form-text">
+        <span className="form-label">{props.label}</span>
+        <span className="form-desc">{props.desc}</span>
+      </span>
+      <input
+        type="checkbox"
+        className="switch"
+        checked={props.checked}
+        onChange={(e) => props.onChange(e.target.checked)}
+      />
+    </label>
+  );
+}
+
+const ALL_THEMES = [...LIGHT_THEMES, ...DARK_THEMES];
+const STEP: Record<string, number> = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+
+/** Theme cards: each is a tiny drawing of the app in that theme (the ground,
+ *  the rail with its sticker, the paper sheet with a title, text, a
+ *  highlight and a muted line). A radio group: arrows move and pick. */
+function ThemePicker({ value, onPick }: { value: string; onPick: (name: string) => void }) {
+  const refs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const onKey = (e: ReactKeyboardEvent) => {
+    const step = STEP[e.key];
+    if (!step) return;
+    e.preventDefault();
+    const i = Math.max(0, ALL_THEMES.indexOf(value));
+    const next = ALL_THEMES[(i + step + ALL_THEMES.length) % ALL_THEMES.length];
+    onPick(next);
+    refs.current[next]?.focus();
+  };
+  const row = (label: string, names: string[]) => (
+    <div className="tp-row">
+      <span className="tp-caption">{label}</span>
+      <div className="tp-grid">
+        {names.map((name) => {
+          const on = name === value;
+          return (
+            <button
+              key={name}
+              ref={(el) => {
+                refs.current[name] = el;
+              }}
+              role="radio"
+              aria-checked={on}
+              tabIndex={on ? 0 : -1}
+              className={`tp-card ${on ? "on" : ""}`}
+              onClick={() => onPick(name)}
+            >
+              <span className="tp-shot" style={THEMES[name] as CSSProperties} aria-hidden>
+                <span className="tp-rail">
+                  <i className="tp-pip on" />
+                  <i className="tp-pip" />
+                  <i className="tp-pip" />
+                </span>
+                <span className="tp-sheet">
+                  <i className="tp-title" />
+                  <i className="tp-line" />
+                  <i className="tp-line mid">
+                    <b className="tp-mark" />
+                  </i>
+                  <i className="tp-line faint" />
+                </span>
+              </span>
+              <span className="tp-name">
+                {name}
+                {on && <Check size={13} strokeWidth={2.6} />}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+  return (
+    <div className="theme-picker" role="radiogroup" aria-label="Theme" onKeyDown={onKey}>
+      {row("Light", LIGHT_THEMES)}
+      {row("Dark", DARK_THEMES)}
     </div>
   );
 }
@@ -222,13 +256,15 @@ function StorageSection() {
       <h2 className="list-section">Storage</h2>
       <div className="list-group">
         <div className="form-row">
-          <span className="form-label grow">Images, notes, subjects, tags and trash</span>
+          <span className="form-text">
+            <span className="form-label">Images, notes, subjects and trash</span>
+            <span className="form-desc">See what takes space and clean it up. Ctrl+Shift+U.</span>
+          </span>
           <button className="row-btn" onClick={() => setView("storage")}>
-            Open Storage →
+            Open Storage
           </button>
         </div>
       </div>
-      <p className="list-footnote">See what takes space and clean it up. Shortcut: Ctrl+Shift+U.</p>
     </>
   );
 }
@@ -271,7 +307,10 @@ function BackupSection() {
       <h2 className="list-section">Backup</h2>
       <div className="list-group">
         <div className="form-row">
-          <span className="form-label grow">Export everything to one .zip file</span>
+          <span className="form-text">
+            <span className="form-label">Export everything to one .zip</span>
+            <span className="form-desc">Notes, Untitled, projects, tasks, images, settings and theme.</span>
+          </span>
           <button className="row-btn" onClick={exportNow} disabled={busy}>
             {busy ? "Exporting…" : "Export backup…"}
           </button>
@@ -301,7 +340,6 @@ function BackupSection() {
           </div>
         )}
       </div>
-      <p className="list-footnote">Notes, Untitled, projects, tasks, images, settings and theme.</p>
       <ImportRows />
     </>
   );

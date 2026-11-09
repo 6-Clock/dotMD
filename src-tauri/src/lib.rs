@@ -8,6 +8,7 @@ mod shell;
 mod storage;
 mod terminal;
 mod todo;
+mod trash;
 mod vault;
 mod watcher;
 
@@ -17,7 +18,23 @@ use tauri::{Emitter, Manager, WindowEvent};
 pub fn run() {
     migrate::migrate_identifier();
 
-    let mut builder = tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    // One dotMD at a time: closing hides to the tray, so launching it again
+    // from the Start Menu would otherwise start a second copy (second tray
+    // icon, two watchers saving the same files). A second launch now just
+    // shows the running window and exits. Must be the first plugin.
+    // Release builds only: dev and installed builds share the identifier, and
+    // a dev run must not be swallowed by an installed dotMD.
+    #[cfg(all(desktop, not(debug_assertions)))]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            shell::show_window(app);
+            let _ = app.emit("summon", ());
+        }));
+    }
+
+    builder = builder
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .manage(terminal::Terminals::default());
@@ -39,8 +56,16 @@ pub fn run() {
             std::fs::create_dir_all(&assets)?;
             app.asset_protocol_scope().allow_directory(&assets, true)?;
 
+            // One trash/ folder laid out like the app (moves old .trash folders).
+            if let Err(e) = trash::migrate_layout(&storage::data_dir(handle)?) {
+                eprintln!("trash migration failed: {e}");
+            }
             storage::ensure_scratch(handle)?;
             storage::retire_daily(handle)?;
+            // Linked notes move into their project's notes/<Project>/ folder.
+            if let Err(e) = projects::sync_folders(handle) {
+                eprintln!("project folder sync failed: {e}");
+            }
             let settings = config::read_settings(handle)?;
 
             // Watch the data folder so external file changes refresh the UI.
@@ -135,7 +160,13 @@ pub fn run() {
             projects::rename_project,
             projects::delete_project,
             projects::restore_project,
+            projects::project_folder,
+            projects::open_project_folder,
+            projects::sync_project_folders,
             todo::load_todos,
+            trash::trash_tasks,
+            trash::untrash_tasks,
+            trash::restore_tasks,
             todo::save_todos,
             config::load_settings,
             config::save_settings,

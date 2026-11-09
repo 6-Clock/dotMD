@@ -68,7 +68,8 @@ export type TermSpawned = { id: number; cwd: string; shell: string };
 /** Start a shell on a PTY; output arrives as `term-data` {id, data}, the end as `term-exit` {id, code}. */
 export const termSpawn = (cols: number, rows: number, cwd?: string) =>
   invoke<TermSpawned>("term_spawn", { cols, rows, cwd: cwd || null });
-export const termWrite = (id: number, data: string) => invoke<void>("term_write", { id, data });
+export const termWrite = (id: number, data: string, binary = false) =>
+  invoke<void>("term_write", { id, data, binary });
 export const termResize = (id: number, cols: number, rows: number) =>
   invoke<void>("term_resize", { id, cols, rows });
 export const termKill = (id: number) => invoke<void>("term_kill", { id });
@@ -135,14 +136,17 @@ export type ImageInfo = {
   used_in_trash: number; // deleted notes linking it
   used_by_projects: string[]; // projects using it as their logo
 };
+/** A live project's footprint: its file + logo + linked notes. */
+export type ProjectInfo = { name: string; bytes: number; modified: number };
 export type TrashItem = {
-  kind: "note" | "image";
-  id: string; // restore id: trash stem (notes) / trash file name (images)
+  kind: "note" | "image" | "project" | "task";
+  id: string; // restore id: note stem / image file / project folder / "<stamp>#<n>" task
   title: string;
+  detail: string; // project: "3 tasks"; task: its subject
   bytes: number;
   modified: number;
 };
-export type StorageReport = { notes: NoteInfo[]; images: ImageInfo[]; trash: TrashItem[] };
+export type StorageReport = { notes: NoteInfo[]; images: ImageInfo[]; projects: ProjectInfo[]; trash: TrashItem[] };
 export type NoteText = { name: string; content: string };
 
 export const storageReport = () => invoke<StorageReport>("storage_report");
@@ -174,8 +178,22 @@ export const updateProject = (project: Project) => invoke<void>("update_project"
 /** Returns the trash stem of a merged-away project file ("" if none). */
 export const renameProject = (from: string, to: string) =>
   invoke<string>("rename_project", { from, to });
-export const deleteProject = (name: string) => invoke<string>("delete_project", { name });
-export const restoreProject = (stem: string) => invoke<void>("restore_project", { stem });
+/** Trash a project (trash/projects/<folder>/) with its tasks and colour; returns the folder. */
+export const deleteProject = (name: string, tasks: Todo[] = [], colour = "") =>
+  invoke<string>("delete_project", { name, tasks, colour });
+/** Restore a trashed project; hands back the tasks + colour that were deleted with it. */
+export const restoreProject = (stem: string) =>
+  invoke<{ tasks: Todo[]; colour: string }>("restore_project", { stem });
+/** Keep deleted tasks in trash/tasks.md; returns the group stamp (for Undo). */
+export const trashTasks = (tasks: Todo[]) => invoke<string>("trash_tasks", { tasks });
+export const untrashTasks = (stamp: string) => invoke<void>("untrash_tasks", { stamp });
+/** Take tasks out of the trash ("<stamp>#<n>" ids); the caller appends them. */
+export const restoreTasks = (ids: string[]) => invoke<Todo[]>("restore_tasks", { ids });
+/** notes/<project>/ (created if needed), the folder its linked notes live in. */
+export const projectFolder = (name: string) => invoke<string>("project_folder", { name });
+export const openProjectFolder = (name: string) => invoke<void>("open_project_folder", { name });
+/** Re-match project folders and front matter; true if anything moved or was linked. */
+export const syncProjectFolders = () => invoke<boolean>("sync_project_folders");
 
 // To-dos -----------------------------------------------------------------
 export const loadTodos = () => invoke<Todo[]>("load_todos");

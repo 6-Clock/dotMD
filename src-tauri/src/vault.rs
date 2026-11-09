@@ -1,7 +1,7 @@
-//! Storage organizer: one report of what's on disk (notes, images, trash) and
-//! the clean-up actions behind the Storage view. Images are trashed (not
-//! removed) like notes; the only hard deletes live here and are confined to
-//! the two `.trash/` folders.
+//! Storage organizer: one report of what's on disk (notes, images, projects,
+//! trash) and the clean-up actions behind the Storage view. Images are trashed
+//! (not removed) like notes; the only hard deletes live here and are confined
+//! to the `trash/` folder (see `trash`).
 
 use std::collections::HashMap;
 use std::fs;
@@ -10,11 +10,12 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
-use crate::images::{assets_dir, unique_file};
+use crate::images::assets_dir;
 use crate::storage::{
-    self, clean_name, extract_tags, modified_secs, original_from_trash, title_from, trash_dir,
-    write_atomic, SCRATCH, TRASH,
+    self, extract_tags, modified_secs, original_from_trash, title_from, trash_dir,
+    write_atomic, SCRATCH,
 };
+use crate::trash;
 
 #[derive(Serialize)]
 pub struct NoteInfo {
@@ -41,14 +42,28 @@ pub struct ImageInfo {
 }
 
 #[derive(Serialize)]
+pub struct ProjectInfo {
+    /// Front-matter name (what the app shows and looks up by).
+    pub name: String,
+    /// Project file + its logo + its linked notes.
+    pub bytes: u64,
+    /// Project file mtime.
+    pub modified: u64,
+}
+
+#[derive(Serialize)]
 pub struct TrashItem {
-    /// "note" or "image".
+    /// "note", "image", "project" or "task".
     pub kind: String,
-    /// Trash file stem (notes) or trash file name (images) — the restore id.
+    /// The restore id: note file stem, image file name, project folder name,
+    /// or `<stamp>#<n>` for a task.
     pub id: String,
     /// What the user called it.
     pub title: String,
+    /// A second line: a project's task count, a task's subject.
+    pub detail: String,
     pub bytes: u64,
+    /// When it was deleted (from the stamp), else the file time.
     pub modified: u64,
 }
 
@@ -56,6 +71,7 @@ pub struct TrashItem {
 pub struct StorageReport {
     pub notes: Vec<NoteInfo>,
     pub images: Vec<ImageInfo>,
+    pub projects: Vec<ProjectInfo>,
     pub trash: Vec<TrashItem>,
 }
 
@@ -110,7 +126,7 @@ fn plain_file(name: &str) -> Result<String, String> {
 /// under the exact name the notes link to.
 fn original_image(trash_name: &str) -> String {
     match trash_name.split_once("__") {
-        Some((stamp, rest)) if stamp.chars().all(|c| c.is_ascii_digit() || c == '-') => rest.into(),
+        Some((stamp, rest)) if stamp.chars().all(|c| c.is_ascii_digit() || "-. ".contains(c)) => rest.into(),
         _ => trash_name.into(),
     }
 }
@@ -129,8 +145,9 @@ pub fn storage_report(app: AppHandle) -> Result<StorageReport, String> {
     };
 
     let mut notes = Vec::new();
-    for (dir, is_system) in [(&system, true), (&notes_dir, false)] {
-        for path in md_files(dir) {
+    let live: Vec<PathBuf> = storage::note_files(&notes_dir).into_iter().map(|(_, p)| p).collect();
+    for (paths, is_system) in [(md_files(&system), true), (live, false)] {
+        for path in paths {
             let name = stem(&path);
             if is_system && name != SCRATCH {
                 continue;
@@ -153,21 +170,53 @@ pub fn storage_report(app: AppHandle) -> Result<StorageReport, String> {
     }
 
     // Project logos: live projects by name, trashed ones like deleted notes.
+    // Live projects also get a size (file + logo + linked notes); trashed ones
+    // are listed in the trash.
+    let note_bytes: HashMap<&str, u64> = notes.iter().map(|n| (n.name.as_str(), n.bytes)).collect();
     let mut logo_of: HashMap<String, Vec<String>> = HashMap::new();
-    let project_trash = crate::projects::projects_dir(&app)?.join(TRASH);
+    let project_trash = trash::projects_dir(&app)?;
+    let mut projects = Vec::new();
+    let mut trash = Vec::new();
     for path in crate::projects::project_files(&app) {
         let content = fs::read_to_string(&path).unwrap_or_default();
         let (project, _) = crate::projects::parse(&content, &stem(&path));
+        let in_trash = path.starts_with(&project_trash);
         for f in links_in(&content) {
-            if path.starts_with(&project_trash) {
+            if in_trash {
                 uses.entry(f.clone()).or_default().1 += 1;
             } else {
                 logo_of.entry(f.clone()).or_default().push(project.name.clone());
             }
         }
+        if in_trash {
+            let folder = path.parent().unwrap_or(&project_trash).to_path_buf();
+            let id = file_name(&folder);
+            let n = trash::read_project_tasks(&folder).tasks.len();
+            trash.push(TrashItem {
+                kind: "project".into(),
+                title: project.name,
+                detail: format!("{n} {}", if n == 1 { "task" } else { "tasks" }),
+                bytes: trash::dir_bytes(&folder),
+                modified: trash::deleted_at(&id).unwrap_or_else(|| modified_secs(&path)),
+                id,
+            });
+            continue;
+        }
+        let logo = project
+            .logo
+            .rsplit(['/', '\\'])
+            .next()
+            .filter(|f| !f.is_empty())
+            .map(|f| size_of(&assets.join(f)))
+            .unwrap_or(0);
+        let linked: u64 = project.notes.iter().filter_map(|n| note_bytes.get(n.as_str())).sum();
+        projects.push(ProjectInfo {
+            bytes: size_of(&path) + logo + linked,
+            modified: modified_secs(&path),
+            name: project.name,
+        });
     }
 
-    let mut trash = Vec::new();
     for path in md_files(&trash_dir(&app)?) {
         let content = fs::read_to_string(&path).unwrap_or_default();
         for f in links_in(&content) {
@@ -177,20 +226,35 @@ pub fn storage_report(app: AppHandle) -> Result<StorageReport, String> {
         trash.push(TrashItem {
             kind: "note".into(),
             title: original_from_trash(&id),
+            detail: String::new(),
             bytes: size_of(&path),
-            modified: modified_secs(&path),
+            modified: trash::deleted_at(&id).unwrap_or_else(|| modified_secs(&path)),
             id,
         });
     }
-    for path in files_in(&assets.join(TRASH)) {
+    for path in files_in(&trash::images_dir(&app)?) {
         let id = file_name(&path);
         trash.push(TrashItem {
             kind: "image".into(),
             title: original_image(&id),
+            detail: String::new(),
             bytes: size_of(&path),
-            modified: modified_secs(&path),
+            modified: trash::deleted_at(&id).unwrap_or_else(|| modified_secs(&path)),
             id,
         });
+    }
+    for g in trash::read_groups(&trash::tasks_file(&app)?) {
+        let when = trash::deleted_at(&g.stamp).unwrap_or(0);
+        for (i, t) in g.tasks.iter().enumerate() {
+            trash.push(TrashItem {
+                kind: "task".into(),
+                id: format!("{}#{i}", g.stamp),
+                title: t.text.clone(),
+                detail: t.subject.clone(),
+                bytes: crate::todo::render(std::slice::from_ref(t)).len() as u64,
+                modified: when,
+            });
+        }
     }
     trash.sort_by(|a, b| b.modified.cmp(&a.modified));
 
@@ -210,17 +274,15 @@ pub fn storage_report(app: AppHandle) -> Result<StorageReport, String> {
         })
         .collect();
 
-    Ok(StorageReport { notes, images, trash })
+    Ok(StorageReport { notes, images, projects, trash })
 }
 
-/// Move images from assets/ into assets/.trash/. Returns their trash names,
-/// in order, so Undo can put exactly these back.
+/// Move images from assets/ into trash/images/ as `<stamp>__<file>`. Returns
+/// their trash names, in order, so Undo can put exactly these back.
 #[tauri::command]
 pub fn trash_images(app: AppHandle, files: Vec<String>) -> Result<Vec<String>, String> {
     let assets = assets_dir(&app)?;
-    let trash = assets.join(TRASH);
-    fs::create_dir_all(&trash).map_err(|e| e.to_string())?;
-    let stamp = chrono::Local::now().timestamp();
+    let bin = trash::images_dir(&app)?;
     let mut out = Vec::new();
     for f in files {
         let f = plain_file(&f)?;
@@ -228,15 +290,9 @@ pub fn trash_images(app: AppHandle, files: Vec<String>) -> Result<Vec<String>, S
         if !src.is_file() {
             continue;
         }
-        let tagged = format!("{stamp}__{f}");
-        let p = Path::new(&tagged);
-        let dest = unique_file(
-            &trash,
-            &p.file_stem().and_then(|s| s.to_str()).unwrap_or("image").to_string(),
-            p.extension().and_then(|e| e.to_str()).unwrap_or("png"),
-        );
-        fs::rename(&src, &dest).map_err(|e| e.to_string())?;
-        out.push(file_name(&dest));
+        let name = trash::free_stem(&bin, &f, "");
+        fs::rename(&src, bin.join(&name)).map_err(|e| e.to_string())?;
+        out.push(name);
     }
     Ok(out)
 }
@@ -246,7 +302,7 @@ pub fn trash_images(app: AppHandle, files: Vec<String>) -> Result<Vec<String>, S
 pub fn restore_image(app: AppHandle, id: String) -> Result<String, String> {
     let id = plain_file(&id)?;
     let assets = assets_dir(&app)?;
-    let src = assets.join(TRASH).join(&id);
+    let src = trash::images_dir(&app)?.join(&id);
     if !src.is_file() {
         return Err("Trashed image not found".into());
     }
@@ -261,36 +317,58 @@ pub fn restore_image(app: AppHandle, id: String) -> Result<String, String> {
 
 fn trash_path(app: &AppHandle, item: &TrashRef) -> Result<PathBuf, String> {
     match item.kind.as_str() {
-        "note" => Ok(trash_dir(app)?.join(format!("{}.md", clean_name(&item.id)?))),
-        "image" => Ok(assets_dir(app)?.join(TRASH).join(plain_file(&item.id)?)),
+        "note" => Ok(trash_dir(app)?.join(format!("{}.md", storage::clean_trash_id(&item.id)?))),
+        "image" => Ok(trash::images_dir(app)?.join(plain_file(&item.id)?)),
+        "project" => Ok(trash::projects_dir(app)?.join(plain_file(&item.id)?)),
         _ => Err("Unknown trash kind".into()),
     }
 }
 
-/// Permanently remove trashed items. Only ever touches the .trash folders.
+/// Permanently remove trashed items. Only ever touches the trash/ folder.
 /// Returns the bytes freed.
 #[tauri::command]
 pub fn delete_forever(app: AppHandle, items: Vec<TrashRef>) -> Result<u64, String> {
     let mut freed = 0;
-    for item in &items {
+    // Tasks live as lines in trash/tasks.md, so they go in one pass.
+    let task_ids: Vec<String> = items.iter().filter(|i| i.kind == "task").map(|i| i.id.clone()).collect();
+    if !task_ids.is_empty() {
+        let gone = trash::take_tasks(&app, &task_ids)?;
+        freed += crate::todo::render(&gone).len() as u64;
+    }
+    for item in items.iter().filter(|i| i.kind != "task") {
         let path = trash_path(&app, item)?;
         if path.is_file() {
             freed += size_of(&path);
             fs::remove_file(&path).map_err(|e| e.to_string())?;
+        } else if path.is_dir() {
+            // A deleted project's folder (page + tasks.md).
+            freed += trash::dir_bytes(&path);
+            fs::remove_dir_all(&path).map_err(|e| e.to_string())?;
         }
     }
     Ok(freed)
 }
 
-/// Empty both trash folders. Returns the bytes freed.
+/// Empty the whole trash (notes, images, projects, tasks). Returns the bytes freed.
 #[tauri::command]
 pub fn empty_trash(app: AppHandle) -> Result<u64, String> {
     let mut freed = 0;
-    for dir in [trash_dir(&app)?, assets_dir(&app)?.join(TRASH)] {
+    for dir in [trash_dir(&app)?, trash::images_dir(&app)?] {
         for path in files_in(&dir) {
             freed += size_of(&path);
             fs::remove_file(&path).map_err(|e| e.to_string())?;
         }
+    }
+    if let Ok(entries) = fs::read_dir(trash::projects_dir(&app)?) {
+        for e in entries.flatten().filter(|e| e.path().is_dir()) {
+            freed += trash::dir_bytes(&e.path());
+            fs::remove_dir_all(e.path()).map_err(|e| e.to_string())?;
+        }
+    }
+    let tasks = trash::tasks_file(&app)?;
+    if tasks.is_file() {
+        freed += size_of(&tasks);
+        fs::remove_file(&tasks).map_err(|e| e.to_string())?;
     }
     Ok(freed)
 }
@@ -348,7 +426,7 @@ pub fn remove_tag(app: AppHandle, tag: String) -> Result<Vec<NoteText>, String> 
         return Err("No tag given".into());
     }
     let mut changed = Vec::new();
-    for path in md_files(&storage::notes_dir(&app)?) {
+    for (_, path) in storage::note_files(&storage::notes_dir(&app)?) {
         let content = fs::read_to_string(&path).unwrap_or_default();
         if !extract_tags(&content).contains(&tag.to_lowercase()) {
             continue;

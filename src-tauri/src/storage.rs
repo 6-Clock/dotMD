@@ -8,8 +8,9 @@ use tauri::{AppHandle, Manager};
 /// The always-present home note that summoning lands on.
 pub const SCRATCH: &str = "scratch";
 
-/// Subfolder inside notes/ where deleted notes rest until restored.
-pub const TRASH: &str = ".trash";
+/// The old per-folder trash name. Still skipped by scans (dot-folders), and
+/// moved into `trash/` at startup by `trash::migrate_layout`.
+pub const TRASH: &str = crate::trash::OLD;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct NoteMeta {
@@ -67,11 +68,9 @@ pub fn notes_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// notes/.trash/ subfolder, created on demand.
+/// Where deleted notes rest: trash/notes/ (see `trash`), created on demand.
 pub(crate) fn trash_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = notes_dir(app)?.join(TRASH);
-    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    Ok(dir)
+    crate::trash::notes_dir(app)
 }
 
 /// system/ subfolder for the app-managed scratch note (Untitled). Kept out
@@ -106,13 +105,77 @@ pub(crate) fn clean_name(name: &str) -> Result<String, String> {
     Ok(name.to_string())
 }
 
-fn note_path(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
+/// A trash id (`<stamp>__<name>`): the same rules as a note name, but room
+/// for the 21-character stamp on top of a full-length name.
+pub(crate) fn clean_trash_id(id: &str) -> Result<String, String> {
+    let id = id.trim().trim_end_matches(".md").trim();
+    if id.is_empty() || id.len() > 160 {
+        return Err("Invalid trash id".into());
+    }
+    if id.contains("..") || id.contains('/') || id.contains('\\')
+        || id.chars().any(|c| c.is_control() || "<>:\"|?*".contains(c))
+    {
+        return Err("Invalid trash id".into());
+    }
+    Ok(id.to_string())
+}
+
+/// Every live note: `.md` files in notes/ and one level of folders under it
+/// (project folders, `notes/<Project>/`), skipping dot-folders like .trash.
+/// Names stay unique across folders, so a note is still found by name alone.
+pub(crate) fn note_files(notes: &Path) -> Vec<(String, PathBuf)> {
+    let mut out = Vec::new();
+    for dir in std::iter::once(notes.to_path_buf()).chain(note_folders(notes)) {
+        let Ok(entries) = fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("md") {
+                if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
+                    out.push((name.to_string(), path.clone()));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Folders directly under notes/ that hold notes (not .trash or other dot-folders).
+pub(crate) fn note_folders(notes: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(notes) else { return Vec::new() };
+    entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.is_dir() && !p.file_name().and_then(|n| n.to_str()).unwrap_or(".").starts_with('.')
+        })
+        .collect()
+}
+
+/// Where note `name` lives right now: notes/ first, then its folders.
+pub(crate) fn find_note(notes: &Path, name: &str) -> Option<PathBuf> {
+    let file = format!("{name}.md");
+    let root = notes.join(&file);
+    if root.exists() {
+        return Some(root);
+    }
+    note_folders(notes).into_iter().map(|d| d.join(&file)).find(|p| p.exists())
+}
+
+/// Path of note `name`: its current file in any folder, or notes/<name>.md
+/// for a note that doesn't exist yet.
+pub(crate) fn note_path(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
     let name = clean_name(name)?;
     // The protected scratch note lives in system/, everything else in notes/.
     if name == SCRATCH {
         return Ok(system_dir(app)?.join(format!("{name}.md")));
     }
-    Ok(notes_dir(app)?.join(format!("{name}.md")))
+    let notes = notes_dir(app)?;
+    Ok(find_note(&notes, &name).unwrap_or_else(|| notes.join(format!("{name}.md"))))
+}
+
+/// Whether a live note called `name` exists in notes/ or any of its folders.
+pub(crate) fn taken(notes: &Path, name: &str) -> bool {
+    find_note(notes, name).is_some()
 }
 
 /// One-time move of a legacy scratch from notes/ into system/. Preserves
@@ -205,17 +268,13 @@ pub fn retire_daily(app: &AppHandle) -> Result<(), String> {
     let text = fs::read_to_string(&old).unwrap_or_default();
     let blank = matches!(text.trim(), "" | "# Daily");
     let dest = if blank {
-        let stamp = chrono::Local::now().timestamp();
-        trash_dir(app)?.join(format!("{stamp}__Daily.md"))
+        let trash = trash_dir(app)?;
+        let stem = crate::trash::free_stem(&trash, "Daily", ".md");
+        trash.join(format!("{stem}.md"))
     } else {
         let dir = notes_dir(app)?;
-        let mut dest = dir.join("Daily.md");
-        let mut n = 2;
-        while dest.exists() {
-            dest = dir.join(format!("Daily {n}.md"));
-            n += 1;
-        }
-        dest
+        let name = unique_name("Daily", |cand| taken(&dir, cand));
+        dir.join(format!("{name}.md"))
     };
     fs::rename(&old, &dest).map_err(|e| e.to_string())
 }
@@ -226,16 +285,7 @@ pub fn retire_daily(app: &AppHandle) -> Result<(), String> {
 pub fn list_notes(app: AppHandle) -> Result<Vec<NoteMeta>, String> {
     let dir = notes_dir(&app)?;
     let mut notes = Vec::new();
-    for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("md") {
-            continue;
-        }
-        let name = match path.file_stem().and_then(|s| s.to_str()) {
-            Some(n) => n.to_string(),
-            None => continue,
-        };
+    for (name, path) in note_files(&dir) {
         let content = fs::read_to_string(&path).unwrap_or_default();
         notes.push(NoteMeta {
             title: title_from(&content, &name),
@@ -281,9 +331,9 @@ pub fn create_note(app: AppHandle, name: String) -> Result<(), String> {
     write_atomic(&path, "")
 }
 
-/// Delete = move the note into notes/.trash/ (restorable), not a hard remove.
-/// The file is stored as `<unix-secs>__<name>.md` so the original name can be
-/// recovered and same-second deletes of two notes don't collide. Returns the
+/// Delete = move the note into trash/notes/ (restorable), not a hard remove.
+/// The file is stored as `<YYYY-MM-DD HH.MM.SS>__<name>.md` so the original
+/// name can be recovered and same-second deletes don't collide. Returns the
 /// trash file stem (empty if the note didn't exist) so callers can undo exactly.
 #[tauri::command]
 pub fn delete_note(app: AppHandle, name: String) -> Result<String, String> {
@@ -296,13 +346,7 @@ pub fn delete_note(app: AppHandle, name: String) -> Result<String, String> {
         return Ok(String::new());
     }
     let trash = trash_dir(&app)?;
-    let stamp = chrono::Local::now().timestamp();
-    let mut stem = format!("{stamp}__{clean}");
-    let mut n = 1;
-    while trash.join(format!("{stem}.md")).exists() {
-        stem = format!("{stamp}-{n}__{clean}");
-        n += 1;
-    }
+    let stem = crate::trash::free_stem(&trash, &clean, ".md");
     fs::rename(&path, trash.join(format!("{stem}.md"))).map_err(|e| e.to_string())?;
     Ok(stem)
 }
@@ -331,9 +375,11 @@ pub fn duplicate_note(app: AppHandle, name: String) -> Result<String, String> {
     }
     let content = fs::read_to_string(&src).map_err(|e| e.to_string())?;
     let clean = clean_name(&name)?;
-    let dir = notes_dir(&app)?;
+    let notes = notes_dir(&app)?;
     let base = format!("{clean} copy");
-    let target = unique_name(&base, |cand| dir.join(format!("{cand}.md")).exists());
+    let target = unique_name(&base, |cand| taken(&notes, cand));
+    // The copy sits next to the original (same project folder).
+    let dir = src.parent().map(Path::to_path_buf).unwrap_or(notes);
     write_atomic(&dir.join(format!("{target}.md")), &content)?;
     Ok(target)
 }
@@ -411,7 +457,7 @@ pub fn list_trash(app: AppHandle) -> Result<Vec<NoteMeta>, String> {
 /// uniquifying the name if one already exists. Returns the restored note name.
 #[tauri::command]
 pub fn restore_note(app: AppHandle, name: String) -> Result<String, String> {
-    let stem = clean_name(&name)?;
+    let stem = clean_trash_id(&name)?;
     let src = trash_dir(&app)?.join(format!("{stem}.md"));
     if !src.exists() {
         return Err("Trashed note not found".into());
@@ -420,7 +466,7 @@ pub fn restore_note(app: AppHandle, name: String) -> Result<String, String> {
     let dir = notes_dir(&app)?;
     let mut target = original.clone();
     let mut n = 1;
-    while dir.join(format!("{target}.md")).exists() {
+    while taken(&dir, &target) {
         target = format!("{original}-{n}");
         n += 1;
     }
@@ -464,16 +510,7 @@ pub fn scan_tags(app: AppHandle) -> Result<Vec<TagCount>, String> {
     use std::collections::{BTreeMap, HashSet};
     let dir = notes_dir(&app)?;
     let mut map: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("md") {
-            continue;
-        }
-        let name = match path.file_stem().and_then(|s| s.to_str()) {
-            Some(n) => n.to_string(),
-            None => continue,
-        };
+    for (name, path) in note_files(&dir) {
         let content = fs::read_to_string(&path).unwrap_or_default();
         let mut seen = HashSet::new();
         for tag in extract_tags(&content) {
@@ -496,14 +533,21 @@ pub fn rename_note(app: AppHandle, from: String, to: String) -> Result<(), Strin
     if from_clean == SCRATCH {
         return Err("The scratch note cannot be renamed".into());
     }
+    let to_clean = clean_name(&to)?;
+    let notes = notes_dir(&app)?;
     let from_path = note_path(&app, &from)?;
-    let to_path = note_path(&app, &to)?;
     if !from_path.exists() {
         return Err("Note does not exist".into());
     }
-    if to_path.exists() {
+    if to_clean == SCRATCH || taken(&notes, &to_clean) {
         return Err("A note with that name already exists".into());
     }
+    // A renamed note stays in its folder.
+    let to_path = from_path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or(notes)
+        .join(format!("{to_clean}.md"));
     fs::rename(&from_path, &to_path).map_err(|e| e.to_string())?;
     // Keep [[links]] pointing at the note under its new name.
     crate::links::rewrite_links(&app, &from_clean, &clean_name(&to)?)
@@ -519,16 +563,7 @@ pub fn search_notes(app: AppHandle, query: String) -> Result<Vec<SearchHit>, Str
     }
     let dir = notes_dir(&app)?;
     let mut hits = Vec::new();
-    for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("md") {
-            continue;
-        }
-        let name = match path.file_stem().and_then(|s| s.to_str()) {
-            Some(n) => n.to_string(),
-            None => continue,
-        };
+    for (name, path) in note_files(&dir) {
         let content = fs::read_to_string(&path).unwrap_or_default();
         let title = title_from(&content, &name);
         for (i, line) in content.lines().enumerate() {
@@ -557,12 +592,21 @@ pub fn file_text(app: AppHandle, content: String) -> Result<String, String> {
     let dir = notes_dir(&app)?;
     let mut name = base.clone();
     let mut n = 1;
-    while dir.join(format!("{name}.md")).exists() {
+    while taken(&dir, &name) {
         name = format!("{base}-{n}");
         n += 1;
     }
     write_atomic(&dir.join(format!("{name}.md")), &content)?;
     Ok(name)
+}
+
+/// Drop a project folder under notes/ once its last note has left it.
+pub(crate) fn remove_if_empty(notes: &Path, dir: Option<&Path>) {
+    if let Some(dir) = dir {
+        if dir != notes && dir.starts_with(notes) {
+            let _ = fs::remove_dir(dir); // fails (and is ignored) if not empty
+        }
+    }
 }
 
 fn slug_from(content: &str) -> String {

@@ -150,10 +150,22 @@ pub fn term_spawn(
 
 /// Keystrokes / pasted text → the shell.
 #[tauri::command]
-pub fn term_write(state: State<'_, Terminals>, id: u32, data: String) -> Result<(), String> {
+pub fn term_write(
+    state: State<'_, Terminals>,
+    id: u32,
+    data: String,
+    binary: Option<bool>,
+) -> Result<(), String> {
     let mut map = state.sessions.lock().map_err(|e| e.to_string())?;
     let s = map.get_mut(&id).ok_or("Terminal has exited")?;
-    s.writer.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
+    // xterm's onBinary (X10-style mouse reports) gives one char per raw byte;
+    // sending those as UTF-8 would turn bytes >= 0x80 into two bytes.
+    let bytes: Vec<u8> = if binary.unwrap_or(false) {
+        data.chars().map(|c| c as u32 as u8).collect()
+    } else {
+        data.into_bytes()
+    };
+    s.writer.write_all(&bytes).map_err(|e| e.to_string())?;
     s.writer.flush().map_err(|e| e.to_string())
 }
 

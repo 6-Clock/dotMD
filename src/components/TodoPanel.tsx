@@ -134,6 +134,11 @@ export function TodoPanel() {
                   style={subjectStyle(todo.subject, colors)}
                   onClick={() => setSelected(pos)}
                   onDoubleClick={() => setEditingTodo(index)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setSelected(pos);
+                    useStore.getState().setTaskMenu({ x: e.clientX, y: e.clientY, index });
+                  }}
                 >
                   <input
                     type="checkbox"

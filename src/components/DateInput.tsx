@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { CalendarDays } from "lucide-react";
-import { formatTyped, maskDate, parseIso, parseTyped } from "../dates";
+import { formatTyped, maskDate, parseIso, parseTyped, ymd } from "../dates";
+import { DatePopover, stepDate } from "./DatePopover";
 
 type Props = {
   /** Committed deadline (YYYY-MM-DD, "" = none). */
@@ -23,11 +24,16 @@ const longLabel = (iso: string) => {
 };
 
 /** Typed MM / DD / YYYY field (slashes auto-insert, year optional) with a
- *  written-out confirmation beside it and a ▦ button for the native picker. */
+ *  written-out confirmation beside it and a ▦ button that opens dotMD's own
+ *  month picker (`DatePopover`). While it's open the field keeps focus and
+ *  owns the keys: arrows ±1 day / ±7, PgUp/PgDn month, Enter picks, Esc closes. */
 export function DateInput({ value, onChange, onValidity, onEnter }: Props) {
   const [text, setText] = useState(() => formatTyped(value));
   const [focused, setFocused] = useState(false);
-  const pickRef = useRef<HTMLInputElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const fieldRef = useRef<HTMLInputElement>(null);
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState("");
   const parsed = parseTyped(text);
 
   // Follow outside changes (picker, a "clear" button) — but never clobber
@@ -50,10 +56,29 @@ export function DateInput({ value, onChange, onValidity, onEnter }: Props) {
 
   const bad = parsed.kind === "invalid" || (parsed.kind === "partial" && !focused);
 
+  const openPicker = () => {
+    setActive(parsed.kind === "ok" ? parsed.iso : value || ymd(new Date()));
+    setOpen(true);
+    fieldRef.current?.focus();
+  };
+  const pick = (iso: string) => {
+    accept(formatTyped(iso));
+    setOpen(false);
+  };
+  const STEPS: Record<string, [number, number]> = {
+    ArrowLeft: [-1, 0],
+    ArrowRight: [1, 0],
+    ArrowUp: [-7, 0],
+    ArrowDown: [7, 0],
+    PageUp: [0, -1],
+    PageDown: [0, 1],
+  };
+
   return (
     <div className="date-input">
-      <div className={`di-box ${bad ? "bad" : ""}`}>
+      <div ref={boxRef} className={`di-box ${bad ? "bad" : ""} ${open ? "open" : ""}`}>
         <input
+          ref={fieldRef}
           className="di-field"
           value={text}
           inputMode="numeric"
@@ -61,7 +86,10 @@ export function DateInput({ value, onChange, onValidity, onEnter }: Props) {
           aria-label="Due date, month / day / year"
           aria-invalid={bad}
           onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
+          onBlur={() => {
+            setFocused(false);
+            setOpen(false);
+          }}
           onChange={(e) => {
             const raw = e.target.value;
             const deleting = (e.nativeEvent as InputEvent).inputType?.startsWith("delete");
@@ -69,9 +97,29 @@ export function DateInput({ value, onChange, onValidity, onEnter }: Props) {
             // (e.g. retyping the month) must keep the text and caret as typed,
             // or "1" gets padded to "01" and the caret jumps past the year.
             const atEnd = e.target.selectionStart === raw.length;
-            accept(deleting || !atEnd ? raw : maskDate(raw));
+            const next = deleting || !atEnd ? raw : maskDate(raw);
+            accept(next);
+            const p = parseTyped(next);
+            if (p.kind === "ok") setActive(p.iso);
           }}
           onKeyDown={(e) => {
+            if (open) {
+              const step = STEPS[e.key];
+              if (step) {
+                e.preventDefault();
+                e.stopPropagation();
+                setActive((a) => stepDate(a || ymd(new Date()), step[0], step[1]));
+                return;
+              }
+              if (e.key === "Enter" || e.key === "Escape") {
+                // Only the calendar closes; the task and its composer stay.
+                e.preventDefault();
+                e.stopPropagation();
+                if (e.key === "Enter" && active) pick(active);
+                else setOpen(false);
+                return;
+              }
+            }
             if (e.key === "Enter" && onEnter) {
               e.preventDefault();
               onEnter();
@@ -83,30 +131,23 @@ export function DateInput({ value, onChange, onValidity, onEnter }: Props) {
           className="di-pick"
           title="Pick a date"
           aria-label="Pick a date"
-          onClick={() => {
-            const el = pickRef.current;
-            if (!el) return;
-            el.value = value;
-            try {
-              el.showPicker();
-            } catch {
-              el.focus();
-            }
-          }}
+          aria-expanded={open}
+          // Toggling from the field keeps focus there (and doesn't blur-close).
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => (open ? setOpen(false) : openPicker())}
         >
           <CalendarDays size={14} strokeWidth={2.1} />
         </button>
-        <input
-          ref={pickRef}
-          type="date"
-          className="di-hidden"
-          tabIndex={-1}
-          aria-hidden
-          onChange={(e) => {
-            if (e.target.value) accept(formatTyped(e.target.value));
-          }}
-        />
       </div>
+      {open && boxRef.current && (
+        <DatePopover
+          anchor={boxRef.current}
+          value={parsed.kind === "ok" ? parsed.iso : value}
+          active={active}
+          onPick={pick}
+          onClose={() => setOpen(false)}
+        />
+      )}
       <span className={`di-preview ${bad ? "bad" : ""}`} aria-live="polite">
         {parsed.kind === "ok" ? longLabel(parsed.iso) : bad ? "Not a date" : ""}
       </span>

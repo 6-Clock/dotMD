@@ -216,6 +216,11 @@ export function Board() {
                       onKeyDown={(e) => {
                         if (e.key === "Enter") setEditingTodo(index);
                       }}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        useStore.getState().setTaskMenu({ x: e.clientX, y: e.clientY, index });
+                      }}
                     >
                       <div className="board-card-top">
                         <input

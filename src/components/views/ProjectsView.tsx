@@ -11,6 +11,7 @@ import { IMAGE_EXTS } from "../../editor/images";
 import { TaskComposer } from "../TaskComposer";
 import { ContextMenu, type MenuItem } from "../ContextMenu";
 import { Eyes } from "../Eyes";
+import { newTerminal } from "../../terminal";
 
 /* Projects: a subject promoted with a page. The index is a grid of square
    tiles; a project page is an organizer — Tasks (Open / Done / All) and the
@@ -42,7 +43,7 @@ function useLogoSrc(logo: string) {
 }
 
 /** One or two initials: "CMPT 361" → "C3", "Thesis" → "T". */
-const monogram = (name: string) =>
+export const monogram = (name: string) =>
   name
     .split(/[\s:_-]+/)
     .filter(Boolean)
@@ -165,6 +166,18 @@ const typing = (e: KeyboardEvent) => {
   const el = e.target as HTMLElement | null;
   return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
 };
+
+
+/** A new terminal session started in the project's notes folder. */
+export async function openTerminalHere(name: string) {
+  try {
+    const dir = await api.projectFolder(name);
+    useStore.setState({ activeView: "terminal", lastView: "terminal" });
+    newTerminal(dir);
+  } catch (e) {
+    console.error("open terminal failed", e);
+  }
+}
 
 export function ProjectsView() {
   const active = useStore((s) => s.activeProject);
@@ -949,6 +962,14 @@ function ProjectPage({ project }: { project: Project }) {
     { label: project.logo ? "Change logo" : "Add logo", onClick: pickLogo },
     ...(project.logo ? [{ label: "Remove logo", onClick: () => updateProject({ ...project, logo: "" }) }] : []),
     { label: "Rename", onClick: () => setRenaming(true) },
+    { label: "-" },
+    // Its linked notes live in notes/<project>/; a terminal there (for
+    // Claude Code and friends) sees exactly this project's notes.
+    { label: "Open terminal here", onClick: () => openTerminalHere(project.name) },
+    {
+      label: "Show folder",
+      onClick: () => api.openProjectFolder(project.name).catch((e) => console.error("open folder failed", e)),
+    },
     { label: "-" },
     {
       label: `Delete project · ${steps} ${steps === 1 ? "task" : "tasks"}`,

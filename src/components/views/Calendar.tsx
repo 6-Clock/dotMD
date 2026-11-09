@@ -381,6 +381,11 @@ export function Calendar() {
         style={subjectStyle(t.subject, colors)}
         tabIndex={0}
         onClick={() => setEditingTodo(idx)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          useStore.getState().setTaskMenu({ x: e.clientX, y: e.clientY, index: idx });
+        }}
         onKeyDown={(e) => {
           if (e.key === "Enter") {
             e.stopPropagation();
