@@ -66,6 +66,38 @@ fn utf8_ready(buf: &[u8]) -> usize {
     }
 }
 
+/// Loaded by bash instead of ~/.bashrc (which it sources first). Each prompt
+/// reports the folder (OSC 7) and marks where the prompt ends (OSC 133;B), so
+/// the frontend can show folder + status without reading the prompt text.
+/// On Windows the frontend reads cmd's `C:\path>` prompt instead.
+#[cfg(target_os = "linux")]
+const BASH_INIT: &str = r#"[ -f ~/.bashrc ] && . ~/.bashrc
+__dotmd_prompt() {
+  printf '\e]7;file://%s%s\a' "${HOSTNAME:-}" "$PWD"
+  case "$PS1" in *'133;B'*) ;; *) PS1="$PS1"'\[\e]133;B\a\]' ;; esac
+}
+PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND
+}__dotmd_prompt"
+"#;
+
+#[cfg(target_os = "linux")]
+fn unix_shell_setup(app: &AppHandle, shell: &str, cmd: &mut CommandBuilder) {
+    // Apps launched from a desktop menu often have no TERM, so shells and
+    // tools would fall back to no colour.
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
+    let is_bash = std::path::Path::new(shell).file_name().is_some_and(|n| n == "bash");
+    if !is_bash {
+        return;
+    }
+    let Ok(dir) = app.path().app_cache_dir() else { return };
+    let rc = dir.join("bash-init.sh");
+    if std::fs::create_dir_all(&dir).is_ok() && std::fs::write(&rc, BASH_INIT).is_ok() {
+        cmd.arg("--rcfile");
+        cmd.arg(rc);
+    }
+}
+
 /// Start a shell. `cwd` falls back to the home folder.
 #[tauri::command]
 pub fn term_spawn(
@@ -91,6 +123,8 @@ pub fn term_spawn(
         .unwrap_or_else(|| PathBuf::from("."));
     let mut cmd = CommandBuilder::new(&shell);
     cmd.cwd(&dir);
+    #[cfg(target_os = "linux")]
+    unix_shell_setup(&app, &shell, &mut cmd);
 
     let mut child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
     drop(pair.slave);

@@ -1,4 +1,5 @@
-# Builds the Windows installer and attaches it to a draft GitHub release.
+# Builds the Windows installer and the Linux packages and attaches them to one
+# draft GitHub release.
 #
 # To cut a release:
 #   1. Bump "version" in package.json, src-tauri/tauri.conf.json and src-tauri/Cargo.toml
@@ -6,6 +7,9 @@
 #   3. Wait for this workflow, then open Releases, check the draft, and Publish.
 #
 # It can also be started by hand from the Actions tab (workflow_dispatch).
+#
+# The draft is created first, in its own job, so the Windows and Linux builds
+# upload to the same release instead of racing to create two.
 
 name: Release
 
@@ -18,7 +22,44 @@ permissions:
   contents: write
 
 jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      id: ${{ steps.release.outputs.result }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { version } = require("./package.json");
+            const tag = `v${version}`;
+            // Reuse a draft left by an earlier run of the same version.
+            const releases = await github.paginate(github.rest.repos.listReleases, context.repo);
+            const existing = releases.find((r) => r.tag_name === tag && r.draft);
+            if (existing) return existing.id;
+            const { data } = await github.rest.repos.createRelease({
+              ...context.repo,
+              tag_name: tag,
+              name: `dotMD ${tag}`,
+              draft: true,
+              prerelease: false,
+              body: [
+                "**Windows:** download **dotMD_*_x64-setup.exe** below and run it. No admin rights needed.",
+                "Windows may say \"Windows protected your PC\" because the installer isn't code-signed yet.",
+                "Click **More info → Run anyway**.",
+                "",
+                "**Linux:**",
+                "- Debian / Ubuntu: `sudo apt install ./dotMD_*_amd64.deb`",
+                "- Fedora / openSUSE: `sudo dnf install ./dotMD-*.x86_64.rpm`",
+                "- Anything else: download the `.AppImage`, `chmod +x` it, and run it.",
+              ].join("\n"),
+            });
+            return data.id;
+
   windows:
+    needs: create-release
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -40,12 +81,38 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: v__VERSION__
-          releaseName: dotMD v__VERSION__
-          releaseBody: |
-            Download **dotMD_*_x64-setup.exe** below and run it. No admin rights needed.
+          releaseId: ${{ needs.create-release.outputs.id }}
 
-            Windows may say "Windows protected your PC" because the installer isn't code-signed yet.
-            Click **More info → Run anyway**.
-          releaseDraft: true
-          prerelease: false
+  linux:
+    needs: create-release
+    # The oldest supported runner: packages built against an older glibc run
+    # on more distros.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          releaseId: ${{ needs.create-release.outputs.id }}
+          # tauri.conf.json lists only the Windows installer; pick Linux formats here.
+          args: --bundles deb,rpm,appimage

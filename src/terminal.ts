@@ -2,7 +2,9 @@
    view: each session owns an xterm.js instance (+ its host element, moved in
    and out of the view on mount) and a Rust PTY running cmd.exe. A small
    zustand store holds what the session rail shows: folder, last command,
-   status. Status and folder are read off cmd's prompt ("C:\path>"). */
+   status. On Windows, status and folder are read off cmd's prompt
+   ("C:\path>"). Elsewhere the shell reports them: OSC 7 (folder, sent at
+   every prompt) and OSC 133;B (end of the prompt), set up by terminal.rs. */
 
 import { create } from "zustand";
 import { Terminal, type ITheme } from "@xterm/xterm";
@@ -30,6 +32,10 @@ type Live = {
   pty: number | null;
   spawning: boolean;
   opened: boolean;
+  /** cmd.exe: read status off its prompt text instead of OSC reports. */
+  cmd: boolean;
+  /** Where the last prompt ended (OSC 133;B): buffer line + column. */
+  promptAt: { y: number; x: number } | null;
 };
 
 type State = { sessions: TermMeta[]; active: number | null };
@@ -96,6 +102,14 @@ function cursorLine(term: Terminal) {
   return text;
 }
 
+/** Text typed after the prompt that ended at `at` (soft-wrapped rows joined). */
+function typedAfterPrompt(term: Terminal, at: { y: number; x: number }) {
+  const buf = term.buffer.active;
+  let text = buf.getLine(at.y)?.translateToString(true, at.x) ?? "";
+  for (let y = at.y + 1; buf.getLine(y)?.isWrapped; y++) text += buf.getLine(y)?.translateToString(true) ?? "";
+  return text;
+}
+
 const pendingStatus = new Set<number>();
 function scheduleStatus(key: number) {
   if (pendingStatus.has(key)) return;
@@ -105,6 +119,11 @@ function scheduleStatus(key: number) {
     const l = live.get(key);
     const m = meta(key);
     if (!l || !m || m.status === "exited") return;
+    if (!l.cmd) {
+      // OSC reports drive status; this just covers shells that send none.
+      if (m.status === "starting") patch(key, { status: "idle" });
+      return;
+    }
     const p = PROMPT.exec(cursorLine(l.term));
     if (!p) return;
     const next: Partial<TermMeta> = {};
@@ -159,7 +178,28 @@ function makeLive(key: number): Live {
   term.loadAddon(fit);
   const host = document.createElement("div");
   host.className = "term-host";
-  const l: Live = { term, fit, host, pty: null, spawning: false, opened: false };
+  const l: Live = { term, fit, host, pty: null, spawning: false, opened: false, cmd: false, promptAt: null };
+
+  // OSC 7 "file://host/path": a new prompt in that folder.
+  term.parser.registerOscHandler(7, (data) => {
+    const path = data.replace(/^file:\/\/[^/]*/, "");
+    let cwd = path;
+    try {
+      cwd = decodeURIComponent(path);
+    } catch {
+      /* raw path with a stray % */
+    }
+    if (meta(key)?.status !== "exited") patch(key, { cwd: cwd || "/", status: "idle" });
+    return true;
+  });
+  // OSC 133;B: the prompt ends here; the command is typed after it.
+  term.parser.registerOscHandler(133, (data) => {
+    if (data.startsWith("B")) {
+      const buf = term.buffer.active;
+      l.promptAt = { y: buf.baseY + buf.cursorY, x: buf.cursorX };
+    }
+    return true;
+  });
 
   term.onData((data) => {
     const m = meta(key);
@@ -171,9 +211,15 @@ function makeLive(key: number): Live {
     if (l.pty === null) return;
     if (data.includes("\r")) {
       // Remember what was submitted at the prompt.
-      const p = PROMPT.exec(cursorLine(term));
-      const cmd = p?.[2].trim();
-      if (p && cmd) patch(key, { last: cmd, status: "running", cwd: p[1] });
+      if (l.cmd) {
+        const p = PROMPT.exec(cursorLine(term));
+        const cmd = p?.[2].trim();
+        if (p && cmd) patch(key, { last: cmd, status: "running", cwd: p[1] });
+      } else if (l.promptAt && m.status !== "running") {
+        const cmd = typedAfterPrompt(term, l.promptAt).trim();
+        l.promptAt = null;
+        if (cmd) patch(key, { last: cmd, status: "running" });
+      }
     }
     api.termWrite(l.pty, data).catch(() => {});
   });
@@ -217,6 +263,7 @@ async function spawn(key: number) {
       return;
     }
     l.pty = r.id;
+    l.cmd = /(^|[\\/])cmd(\.exe)?$/i.test(r.shell);
     byPty.set(r.id, key);
     patch(key, { cwd: r.cwd, shell: r.shell.replace(/^.*[\\/]/, "") });
   } catch (err) {
@@ -233,7 +280,7 @@ export function newTerminal(cwd?: string): number {
   const key = ++seq;
   live.set(key, makeLive(key));
   useTerminals.setState((s) => ({
-    sessions: [...s.sessions, { key, cwd: cwd ?? "", shell: "cmd.exe", last: "", status: "starting", code: null }],
+    sessions: [...s.sessions, { key, cwd: cwd ?? "", shell: "", last: "", status: "starting", code: null }],
     active: key,
   }));
   return key;
